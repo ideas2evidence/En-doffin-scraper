@@ -1,6 +1,24 @@
 En kort proof-of-concept for en Doffin-scraper
 ================
 
+-   [Bakgrunn](#bakgrunn)
+-   [Hvordan løse dette](#hvordan-løse-dette)
+    -   [Obsobs - er det lov?](#obsobs---er-det-lov)
+    -   [Rvest og Xpath](#rvest-og-xpath)
+-   [La oss lage noen funksjoner for å få litt mer oversiktlig
+    kode](#la-oss-lage-noen-funksjoner-for-å-få-litt-mer-oversiktlig-kode)
+    -   [Hente siste kunngjøringer](#hente-siste-kunngjøringer)
+    -   [Loope gjennom en liste av
+        kunder](#loope-gjennom-en-liste-av-kunder)
+    -   [Hente en liste med kunder fra
+        mappenavn](#hente-en-liste-med-kunder-fra-mappenavn)
+    -   [Kunngjøring av konkurranser etter
+        CPV](#kunngjøring-av-konkurranser-etter-cpv)
+    -   [Hente ut mer informasjon fra selve
+        kunngjøringen](#hente-ut-mer-informasjon-fra-selve-kunngjøringen)
+-   [Automatisk kjøring av jobben](#automatisk-kjøring-av-jobben)
+-   [Få tilsendt varsel på epost](#få-tilsendt-varsel-på-epost)
+
 Målet er å lage en webscraper som regelmessig henter data fra Doffin om
 relevante utlysninger. Det ser ut til å funke fint - dermed kan en med
 litt mer jobb, evt. jevnlig kjøring, lage seg et system som automatisk
@@ -76,43 +94,9 @@ behandle disse. Dermed trenger vi disse bibliotekene:
 
 ``` r
 #biblioteker
-library(tidyverse)
-```
-
-    ## -- Attaching packages --------------------------------------- tidyverse 1.3.1 --
-
-    ## v ggplot2 3.3.5     v purrr   0.3.4
-    ## v tibble  3.1.6     v dplyr   1.0.7
-    ## v tidyr   1.1.4     v stringr 1.4.0
-    ## v readr   2.1.1     v forcats 0.5.1
-
-    ## -- Conflicts ------------------------------------------ tidyverse_conflicts() --
-    ## x dplyr::filter() masks stats::filter()
-    ## x dplyr::lag()    masks stats::lag()
-
-``` r
-library(rvest) #scrape-pakke
-```
-
-    ## 
-    ## Attaching package: 'rvest'
-
-    ## The following object is masked from 'package:readr':
-    ## 
-    ##     guess_encoding
-
-``` r
-library(janitor) #for den hendige get_dupes()-funksjonen
-```
-
-    ## 
-    ## Attaching package: 'janitor'
-
-    ## The following objects are masked from 'package:stats':
-    ## 
-    ##     chisq.test, fisher.test
-
-``` r
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(rvest)) #scrape-pakke
+suppressPackageStartupMessages(library(janitor)) #for den hendige get_dupes()-funksjonen
 library(robotstxt) #for å spørre om jeg får lov til å skrape
 ```
 

@@ -1,6 +1,10 @@
 ---
 title: "En kort proof-of-concept for en Doffin-scraper"
-output: github_document 
+output: 
+  github_document:
+    html_preview: false
+    toc: true
+    toc_depth: 2
 ---
 
 Målet er å lage en webscraper som regelmessig henter data fra Doffin om relevante utlysninger. Det ser ut til å funke fint - dermed kan en med litt mer jobb, evt. jevnlig kjøring, lage seg et system som automatisk finner nye aktuelle utlysninger når de lyses ut.
@@ -40,9 +44,9 @@ For å hente ut informasjonen må en dermed lese inn HTML-filene, og behandle di
 
 ```{r}
 #biblioteker
-library(tidyverse)
-library(rvest) #scrape-pakke
-library(janitor) #for den hendige get_dupes()-funksjonen
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(rvest)) #scrape-pakke
+suppressPackageStartupMessages(library(janitor)) #for den hendige get_dupes()-funksjonen
 library(robotstxt) #for å spørre om jeg får lov til å skrape
 ```
 
