@@ -1,0 +1,427 @@
+---
+title: "En kort proof-of-concept for en Doffin-scraper"
+output: html_notebook
+---
+
+Målet er å lage en webscraper som regelmessig henter data fra Doffin om relevante utlysninger. Det ser ut til å funke fint - dermed kan en med litt mer jobb, evt. jevnlig kjøring, lage seg et system som automatisk finner nye aktuelle utlysninger når de lyses ut.
+
+### Gjenstående ting å se på
+
+- Teste funnene fra robot-søk mot manuelle søk - er det noe som forsvinner for roboten?
+- Sikker berikelse med beskrivelse og cpv fra selve kunngjøringen for ulike edgecaser?
+-- "Warning in temp_resultater$beskrivelse[i] <- temp_beskrivelse : number of items to replace is not a multiple of replacement length"
+- Hva er fornuftige søkestrenger og cpv-er? M.a.o.: hvilke kunngjøringer er det vi er interessert i? 
+- Automatisk kjøring i script-form
+- Resultater på epost (funker med mailR - men kanskje ikke stor verdi av dette uten automatisk kjøring)
+- Jeg får advarsler om at "closing unused connection n (url)". Verdt å ta en titt på [stackoverflow](https://stackoverflow.com/questions/37839566/how-do-i-close-unused-connections-after-read-html-in-r) her?  
+- hvis lista kun_utlysninger er like lang som PageSize, er det fare for at det er flere sider med resultater. Dette burde en advare om, og ideelt sett også håndtere. 
+- Query-argumentet bør ha noe for å sjekke at strengen er korrekt definert (med + i stedet for mellomrom, evt "" hvis strengt søk)
+
+# Bakgrunn
+
+[Doffin](https://www.doffin.no/) er den nasjonale kunngjøringsdatabasen for offentlige anskaffelser på doffin.no . 
+
+- For å holde seg oppdatert på aktuelle kunngjøringer, kan det være en fordel å med jevne mellomrom få varslinger om nye kunngjøringer. 
+- Det kan også være nyttig å kunne sette opp abonnementer på relativt komplekse søk (f.eks. etter flere oppdragsgivere en kjenner godt, mange mindre oppdragsgivere som publiserer sjeldnere og dermed lettere går under radaren). 
+- Det kan også potensielt være verdi å kunne se statistikk over omfanget av utlysninger etter ulike parametre (som. f.eks. om det er spesielle måneder hvor det lyses ut spesielt mye FoU-prosjekter, om det er aktører som i større eller mindre grad bruker Doffin (og dermed heller bruker andre anskaffelseskanaler).
+
+Men Doffin-nettsida tilbyr i dag lite som passer slikt. Doffin er kun en database og et web-grensesnitt for å søke i databasen, og tilbyr ikke selv noen tjenester som dekker dette. 
+
+Jeg har tidligere (i en anna sammenheng) vært i kontakt med daværende eier av Doffin-databasen, og undersøkte mulighetene for å få den utlevert. Det førte ingen steder. Vi må dermed ta sakene i egne hender. Det ser heller ikke ut til å ligge noe kode åpent tilgjengelig som gjør det samme, men et par ting finnes dog: 
+- En [open source-entusiast](https://github.com/petterreinholdtsen/local-doffin-db) har laget en webscraper for scraperwiki for å konvertere Doffin til en lokal sqlite-database. Den er sist oppdatert i 2006, og jeg snakker ikke scraperwiki (eller QuickCode, som det heter nå? En plattform for R og Python?)
+- Det finnes også, i [gist-form på GitHub](https://gist.github.com/ringe/db4c2fde97b9b8ae5fee), en Ruby-basert "Mechanize based Sidekiq Worker" som rapporterer om nye utlysninger. Den ble sist oppdatert for 7 år siden, og jeg snakker ikke Ruby heller.
+
+# Hvordan løse dette
+
+Begge kode-eksemplene jeg fant bruker webscraping med xpath og css-selectorer. En kikk på nettsida med konsollet i Chrome, bekrefter på at dataene ikke hentes fra noe åpent tilgjengelig API eller lignende. 
+
+For å hente ut informasjonen må en dermed lese inn HTML-filene, og behandle disse. Dermed trenger vi disse bibliotekene:
+
+
+```{r}
+#biblioteker
+library(tidyverse)
+library(rvest) #scrape-pakke
+library(janitor) #for den hendige get_dupes()-funksjonen
+library(robotstxt) #for å spørre om jeg får lov til å skrape
+```
+
+Planen er å bruke en rvest til å simulere ulike former for søk mot Doffin, og så hente ut informasjonen i tabellform på en slik måte at det kan sorteres og visualiseres. 
+
+Videre skal jeg undersøke mulighetene for å sette opp automatiske kjøringer av et script som gjør slike søk, og automatisk leveranse av resultatene på epost.
+
+## Obsobs - er det lov?
+
+Før en stuper inn i det, er det et par ting som må avklares:
+
+- Tillater [brukerbetingelsene for Doffin](https://doffin.no/Home/TermOfUseSupplier) at vi bruker innholdet? 
+
+I følge betingelsene tilhører alt materiale enten EU-supply eller Nærings- og fiskeridepartementet, men rettighetene er også overført Fornyings- og administrasjonsdepartementet - med mindre annet er oppgitt. 
+
+Det er ikke spesielt tydelig, ettersom FAD ble lagt ned i 2014, og EU-supply ikke lenger er leverandør for Doffin. Det står imidlertid ingenting om bruk av materialet i betingelsene. Ettersom dette er en offentlig portal for publisering av informasjon, legger jeg derfor til grunn at materialet kan hentes ned. Hvis en skulle brukt det i et prosjekt eller til å lage et produkt, ville jeg imidlertid tatt kontakt med noen for å oppklare dette.
+
+- Tillater nettsida at vi bruker en robot for å skrape ut innholdet? 
+
+En av flere guider er [her](https://stevenmortimer.com/scraping-responsibly-with-r/), som anbefaler [robotstxt-pakka](https://cran.r-project.org/web/packages/robotstxt/vignettes/using_robotstxt.html). Her kan en teste enkelt-stier i robots.txt-fila på nettsida, og se om det er tillatt for roboter å aksessere den. Jeg sjekker for et generelt søkeresultat og en enkelt kunngjøring:
+
+```{r}
+#for søkeresultatet
+paths_allowed(
+  paths = "/Notice/?query=&PageNumber=1&PageSize=10&OrderingType=0&OrderingDirection=1&RegionId=&CountyId=&MunicipalityId=&IsAdvancedSearch=false&location=&NoticeType=&PublicationType=&IncludeExpired=false&Cpvs=&EpsReferenceNr=&DeadlineFromDate=&DeadlineToDate=&PublishedFromDate=&PublishedToDate=",
+  domain = "doffin.no",
+  bot = "*"
+)
+
+#for ett enkelt-oppslag/en enkelt kunngjøring
+paths_allowed(
+  paths = "Notice/Details/2022-360774",
+  domain = "doffin.no",
+  bot = "*"
+)
+```
+
+Begge test-spørringene returnerer SANN, og det bør derfor være tillatt. Det kommer imidlertid også en rekke advarsler her - on_not_found er en hendelse som trigges ved en 404-feil, dvs. "ikke funnet". Kan det dermed tenkes at robots.txt mangler eller ikke er definert som forventa? Eller er det pakka det er noe feil med? 
+
+Et annet alternativ er å bruke [polite-pakka](https://dmi3kno.github.io/polite/), det [anbefales også av tidyverse-Wickham](https://rvest.tidyverse.org/). Hvis en skal lage funksjoner som henter info fra mange nettsider, kan det være lurt. Samtidig tror jeg det viktigste er å ikke overbelaste nettsida, noe som også kan gjøres med å sette godt med Sys.sleep-tid mellom spørringer.
+
+## Rvest og Xpath
+
+Rvest er tidyverse-pakka for enkel web-scraping, ifølge [vignetten](https://cloud.r-project.org/web/packages/rvest/vignettes/rvest.html). Eksempelet i vignetten for pakka er basert på en enkel side-struktur. Tutorial-innføringa i rvest er ganske enkel, og ikke direkte overførbar til Doffin-sida, hvor elementene vi er interessert i ligger på nivå 9 som barnebarns barnebarn e.l. under en hel haug div-tagger. En bør dermed kjenne til xpath for å finne fram.
+
+Xpath er XML path language, og bruker sti-aktig språk for å finne noder i et xml-dokument. HTML-dokumenter kan dermed også leses med dette språket. W3 har en grei oversikt over syntax og begreper. W3 styrer med dette, og har en god intro til syntaksen [her](https://www.w3schools.com/xml/xpath_intro.asp).
+
+En kan finne xpath i Chrome-konsollet ("inspiser element" -> "elements" -> høyreklikk -> "copy xpath" eller "copy full xpath". 
+
+I vignetten forklares et vanlig mønster for rvesting: Først bruke html_elements for å få ut alt, og så html_element for å velge enkelt-klosser som skal utgjøre den enkelte rad eller kolonne. Det er fordi html_element alltid returnerer like mange elementer som du sender inn, og fyller inn med NA. Dermed er den sikrere (hvis f.eks. en av oppføringene mangler et under-element, får den NA, i stedet for å bare mangle uten noen mulighet til å finne ut av hvem som mangler). Ett eksempel: Første gjennomgang ga 11 elementer fra navn, men 10 elementer fra alle de andre elementene. Det var fordi også en av de andre elementene ble tatt med, ikke bare noticene, og hadde et navn.
+
+# La oss lage noen funksjoner for å få litt mer oversiktlig kode
+
+Dette ser ut til å fungere etter hensikten. Men koden tar litt mye plass, og er ganske gjentakende.
+
+Først to funksjoner, en for å lage URL og en for å hente ut de ønskede dataene fra søkeresultatet.
+
+```{r}
+#doffin_url_builder
+#definerer funksjonen som en i utgangspunktet tom funksjon, kun sidenummer, antall resultater pr side, og sortering etter kunngjøringsdato. isadvancedsearch og includeexpired er false.
+#CamelCase
+
+#argumenter
+#query: "Direktoratet+for+høyere+utdanning+og+kompetanse+(HK-dir)"',
+#PageNumber: sidenummer, brukt over
+#PageSize:  hvor mange treff pr side
+#&OrderingType: 0 - relevans, 1 - kunngjøringsdato, 2 - tilbudsfrist, 3 - doffin-referanse, 4 - tittel, 5 - publisert av
+#OrderingDirection:  0 - stigende, 1 - synkende
+#RegionId:  div geokoder på regionnivå
+#CountyId: div goekoder på flkenivå
+#MunicipalityId. div geokoder på kommunenivå
+#IsAdvancedSearch: true hvis du inkluderer overliggende regioner , false som standard
+#location:  usikker på denne, kanskje en kombo av geokodene?
+#NoticeType:  kunngjøringstype - blank = alle, 1 = veiledende, 2 = kunngjøring av konkurranse, 3 = tildeling, 4 = intensjonskunngjøring, 6 = kjøperprofil, 999999 = Dynamisk innkjøpsprofil.
+#PublicationType: blank = alle, 1 = nasjonal, 2 = europeisk, 5 = market consulting
+#IncludeExpired: #skal utgåtte inkluderes? true hvis ja, false hvis nei
+#Cpvs: CPV-koder her - flere bindes sammen med + , eksempel: Cpvs=34000000+33000000
+#EpsReferenceNr: Doffin referanse-nr.
+#DeadlineFromDate; tilbudsfrist fra, formateres 01.01.2022 DD.MM.ÅÅÅÅ
+#DeadlineToDate: tilbudsfrist til, formateres 01.02.2022
+#PublishedFromDate: #kunngjøringsdato fra, formateres 01.02.2022
+#PublishedToDate: #kunngjøringsdato til, formaters også 01.02.2022
+
+doffin_url_builder = function(Query = "", PageNumber = "1", PageSize = "100", OrderingType = "1", OrderingDirection = "1", RegionId = "", CountyId = "", MunicipalityId = "", IsAdvancedSearch = "false", Location = "", NoticeType = "", PublicationType = "", IncludeExpired = "false", Cpvs = "", EpsReferenceNr = "", DeadlineFromDate = "", DeadlineToDate = "", PublishedFromDate = "", PublishedToDate = ""){
+  temp_url = paste0("https://doffin.no/Notice?",
+        "query=", Query,
+        "&PageNumber=", PageNumber,
+        "&PageSize=", PageSize,
+        "&OrderingType=", OrderingType, 
+        "&OrderingDirection=", OrderingDirection, 
+        "&RegionId=", RegionId,
+        "&CountyId=", CountyId,
+        "&MunicipalityId=", MunicipalityId,
+        "&IsAdvancedSearch=", IsAdvancedSearch,
+        "&location=", Location,
+        "&NoticeType=", NoticeType,
+        "&PublicationType=", PublicationType,
+        "&IncludeExpired=", IncludeExpired,
+        "&Cpvs=", Cpvs,
+        "&EpsReferenceNr=", EpsReferenceNr,
+        "&DeadlineFromDate=", DeadlineFromDate,
+        "&DeadlineToDate=&", DeadlineToDate,
+        "PublishedFromDate=", PublishedFromDate,
+        "&PublishedToDate=", PublishedToDate
+  )
+}
+
+#doffin_fetch_results
+#en funksjon som tar en doffin-query-url som input, og returnerer resultatet som en data.frame
+#basert på rvest-pakken
+
+doffin_fetch_results = function(url){
+  #henter html-fil
+  temp_html = read_html(url)
+  #henter ut kun utlysninger fra html-fila
+  kun_utlysninger = html_elements(temp_html, 
+                                  xpath = "//*[@id='content']/div/article[3]/div[@class = 'notice-search-item']")
+  #setter sammen datasettet
+  temp_df = data.frame(
+    doffin_referanse = html_element(kun_utlysninger, 
+                                    xpath = "div[@class = 'right-col']/div[1]") %>%
+      html_text2(), 
+    navn = html_element(kun_utlysninger, 
+                        xpath = "div[@class = 'notice-search-item-header']/a[contains(@href, 'Notice')]") %>%
+      html_text2(),
+    publisert_av = html_element(kun_utlysninger, xpath = "div[@class = 'left-col']/div[1]") %>%
+      html_text2(),
+    kunngjoring_type = html_element(kun_utlysninger, xpath = "div[@class = 'left-col']/div[2]") %>%
+      html_text2(), 
+    kunngjoring_dato = html_element(kun_utlysninger, xpath = "div[@class = 'right-col']/div[last()]") %>%
+      html_text2(), 
+    tilbudsfrist_dato = html_element(kun_utlysninger, xpath = "div[@class = 'right-col']/div[2]/span") %>%
+      html_text2(), 
+    lenke = html_element(kun_utlysninger, 
+                         xpath = "div[@class = 'notice-search-item-header']/a[contains(@href, 'Notice')]/@href") %>%
+      html_text()
+  )
+}
+
+```
+
+Denne funksjonen har en del forbedringspotensiale:
+
+- hvis lista kun_utlysninger er like lang som PageSize, er det fare for at det er flere sider med resultater. Dette burde en advare om, og ideelt sett også håndtere. Kjapp kikk på det:
+
+```{r}
+url = doffin_url_builder()
+temp_html = read_html(url)
+#henter pagineringselementet
+paginering = html_elements(temp_html, 
+                         xpath = "//*[@id='content']/div/article[3]/div[101]")
+#henter sidetallet fra denne, trekker ut teksten, og konverterer tallet til et tall.
+antall_sider = html_element(paginering, xpath = "ul[2]/li[3]") %>%
+  html_text2() %>%
+  parse_number(.)
+  
+```
+
+
+
+
+- Query-argumentet bør ha noe for å sjekke at strengen er korrekt definert (med + i stedet for mellomrom, evt "" hvis strengt søk)
+- Hvis det skal brukes i en loop - feilhåndtering?
+
+Men på denne måten kan spørringene skrives langt mer kompakte. 
+
+## Hente siste kunngjøringer
+
+Standard-søket blir da slik:
+
+```{r}
+url = doffin_url_builder()
+resultater = doffin_fetch_results(url)
+```
+
+
+## Loope gjennom en liste av kunder
+
+Her er et eksempel, med alle ikke-utgåtte kunngjøringer av konkurranser fra våre vanligste kunder:
+
+```{r}
+
+#merk %22 er HTML for "", de trengs her og der for å få treff.
+#stoler ikke 100 % på denne.
+
+kunder = c(
+  "Viken+fylkeskommune",
+  "Arbeids-+og+inkluderingsdepartementet",
+  "NAV",
+  "Bergen+kommune",
+  "%22Barne-,+ungdoms-+og+familiedirektoratet%22",
+  "Digitaliseringsdirektoratet",
+  "Direktoratet+for+forvaltning+og+økonomistyring+(DFØ)",
+  "%22Direktoratet+for+høyere+utdanning+og+kompetanse+(HK-dir)%22",
+  "Distriktssenteret",
+  "Integrerings-+og+mangfoldsdirektoratet+(IMDi)",
+  "Husbanken"
+)
+
+resultater = data.frame()
+
+for(i in 1:length(kunder)){
+  url = doffin_url_builder(Query = kunder[i], NoticeType = "2")
+  temp_resultater = doffin_fetch_results(url)
+  if(nrow(temp_resultater) == 0){
+    message("ingen funn for ", i, " - ", kunder[i])
+  }
+  if(nrow(temp_resultater) > 0){
+    temp_resultater$`søk` = kunder[i]
+    resultater = bind_rows(resultater, temp_resultater)
+    message("ferdig med ", i, ", ", kunder[i])
+  }
+  Sys.sleep(5)
+}
+
+```
+
+ 5 sekunders Sys.sleep-tid bør være bra.
+
+## Hente en liste med kunder fra mappenavn
+
+Hvis det finnes en ferdigdefinert liste over kunder en skal slå opp kan en bruke det. Som f.esk. fra mappene med tidligere utforma tilbud. 
+
+```{r}
+
+kunder = dir("D:/Gamle tilbud") #107 navn her - dette kan bli litt mye, 107*5 = 9 minutt venting + arbeidstid.
+#må erstatte mellomrom med + 
+kunder = str_replace_all(kunder, "\\s", "+")
+#en evt. anna mulighet er å legge " eller %22 rundt alt som er flere ord, for mer presise treff?
+
+```
+
+```{r}
+resultater = data.frame()
+
+for(i in 1:length(kunder)){
+  url = doffin_url_builder(Query = kunder[i], NoticeType = "2")
+  temp_resultater = doffin_fetch_results(url)
+  if(nrow(temp_resultater) == 0){
+    message("ingen funn for ", i, " - ", kunder[i])
+  }
+  if(nrow(temp_resultater) > 0){
+    temp_resultater$`søk` = kunder[i]
+    resultater = bind_rows(resultater, temp_resultater)
+    message("ferdig med ", i, ", ", kunder[i], ", ", nrow(temp_resultater), " funnet.")
+  }
+  Sys.sleep(5)
+}
+
+```
+
+```{r}
+#sjekk for duplikater
+duplikater = get_dupes(resultater, doffin_referanse)
+#fjerner duplikater, beholder første forekomst. husk .keep_all = TRUE for å beholde faktisk informasjon...
+resultater = distinct(resultater, doffin_referanse, .keep_all = TRUE)
+```
+
+Med 576 resultater, er dette alt for mye til at det er praktisk å gå igjennom. Da måtte vi i så fall ha supplert informasjonen med CPV-informasjon. Men lar den seg finne like enkelt?
+
+## Kunngjøring av konkurranser etter CPV
+
+Før vi gjør det, la oss bare ta et kjapt søk som sammenfatter siste ukes kunngjøringer av konkurranser på en sentral CPV:
+
+```{r}
+fradato = format(Sys.Date() - 7, "%d.%m.%Y")
+tildato = format(Sys.Date(), "%d.%m.%Y")
+
+url = doffin_url_builder(
+  NoticeType = "2",
+  Cpvs = "73000000", 
+  PublishedFromDate = fradato, 
+  PublishedToDate = tildato)
+
+resultater = doffin_fetch_results(url)
+
+#skriver ut resultatet
+write.csv(resultater, "resultater.csv", row.names = FALSE)
+```
+
+
+## Hente ut mer informasjon fra selve kunngjøringen
+
+Jeg har URL til kunngjøringen, og kan dermed hente informasjon herifra.
+
+```{r}
+url = doffin_url_builder(Query = "IMDi", NoticeType = "2")
+temp_resultater = doffin_fetch_results(url)
+
+#denne kan fjerne info
+test = str_remove(temp_resultater[1,1], fixed("Doffin referanse: "))
+
+#men vi har jo lenka
+mer_info <- read_html(paste0("https://doffin.no", temp_resultater[1,7]))
+cpv = html_elements(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[5]/div/span") %>%
+  html_text2()
+
+#er det samme mønster på en anna en?
+mer_info <- read_html(paste0("https://doffin.no", temp_resultater[3,7]))
+cpv = html_elements(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[5]/div/span") %>%
+  html_text2()
+#kort beskrivelse også?
+beskrivelse = html_elements(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[9]/div") %>%
+  html_text2()
+
+#vi looper igjennom litt flere samtidig!
+
+for(i in 1:nrow(temp_resultater)){
+  mer_info <- read_html(paste0("https://doffin.no", temp_resultater[i,7]))
+  temp_resultater$cpv[i] = html_elements(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[5]/div/span") %>%
+  html_text2()
+  temp_resultater$beskrivelse[i] = html_elements(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[9]/div") %>%
+  html_text2()
+  Sys.sleep(5)
+}
+```
+
+Virker dette også hvis jeg henter de 100 siste kunngjøringene, uavhengig av type, oppdragsgiver, mm? Det kan godt være. Legger inn en liten if-setning for å unngå nullfunn. Fikk en feil her, på /Notice/Details/2022-312872, som mangler denne beskrivelsen. Den er p.t. ikke håndtert.
+
+```{r, eval = FALSE}
+url = doffin_url_builder()
+temp_resultater = doffin_fetch_results(url)
+
+for(i in 1:nrow(temp_resultater)){
+  mer_info <- read_html(paste0("https://doffin.no", temp_resultater[i,7]))
+  temp_cpv = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[5]/div/span") %>%
+  html_text2()
+  if(length(temp_cpv) > 0){
+    temp_resultater$cpv[i] = temp_cpv
+  }
+  if(length(temp_cpv) == 0){
+    temp_resultater$cpv[i] = NA
+  }
+  temp_beskrivelse = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[9]/div") %>%
+  html_text2()
+  if(length(temp_beskrivelse) > 0){
+    temp_resultater$beskrivelse[i] = temp_beskrivelse
+  }
+  if(length(temp_beskrivelse) == 0){
+    temp_resultater$beskrivelse[i] = NA
+  }
+  Sys.sleep(5)
+}
+```
+
+
+# Automatisk kjøring av jobben
+
+For å automatisere kjøring av script, er det flere på internett som anbefaler pakka [taskscheduleR](https://cran.r-project.org/web/packages/taskscheduleR/vignettes/taskscheduleR.html). 
+
+Da trenger vi en kompakt versjon av dette som et script. 
+
+Bruker Addin-funksonaliteten til taskscheduleR. Prøver meg i første omgang med å lage en engangs-hendelse om 2 minutter. Så venter jeg da.
+
+Og venter.
+
+Fikk en brannmurvarsel, prøver igjen. Denne gangen ONLOGON.
+
+# Få tilsendt varsel på epost
+
+Pakken mailR virker relevant - https://www.rdocumentation.org/packages/mailR/versions/0.8. 
+
+Oppretter en test-epostadresse i Google. MailR krever rJava, som igjen krever at Java er installert på maskinen. For å bruke Google-kontoen, må en aktivere sikkerhetsinnstillingen som åpner for "mindre trygger apper". Så ikke gjør dette med en alvorlig epostadresse, kanskje?
+
+```{r, eval = FALSE}
+library(mailR)
+
+send.mail(from = "automatisk.rapportering@gmail.com",
+          to = "eivind.hageberg@gmail.com",
+          subject = "Testepost",
+          body = "Innhold",
+          attach.files = "resultater.csv",
+          smtp = list(host.name = "smtp.gmail.com", 
+                      port = 465, 
+                      user.name = "automatisk.rapportering", 
+                      passwd = "#######", 
+                      ssl = TRUE),
+          authenticate = TRUE,
+          send = TRUE)
+```
+
+

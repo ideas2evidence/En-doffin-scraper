@@ -1,0 +1,235 @@
+---
+title: "Siste aktuelle treff på Doffin"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+```{r, include = FALSE}
+#[Todo]
+#- Vil lage noe som kan være slik: https://www.reddit.com/r/rstats/comments/7rpm5y/what_is_the_best_way_to_automatically_knit_an/
+#- https://bookdown.org/yihui/rmarkdown-cookbook/kable.html#generate-multiple-tables-from-a-for-loop
+
+
+#bibliotek
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(rvest)
+library(janitor)
+library(readxl)
+
+#støttefunksjoner
+source("scripts/scraper_functions.R")  
+
+#støttedata
+cpv_koder <- read_excel("input/cpv_2008_ver_2013.xlsx", col_types = c("text", "text", "skip")) %>%
+  separate(., CODE, into =c("cpv", NA), sep = 8)
+
+#parametre
+fradato = format(Sys.Date() - 7, "%d.%m.%Y")
+tildato = format(Sys.Date(), "%d.%m.%Y")
+cpv_oppslag = "73000000+79300000+79400000+98342000"
+
+#andre aktuelle CPV-koder
+#73000000 (Forsknings- og utviklingsvirksomhet og tilhørende konsulenttjenester)
+  #73200000  -  Konsulentvirksomhet i forbindelse med forskning og utvikling
+#75110000 - Allmenne offentlige tjenester
+#79300000  -  Markeds- og økonomisk analyse; offentlig meningsmåling og statistikk
+       #79310000  -  Market research services
+            #79311200  -  Utførelse av undersøkelse
+       #79330000  -  Statistiske tjenesteytelser
+#79400000  -  Bedriftsrådgivning og administrativ rådgivning og beslektede tjenester
+#98342000  -  Arbeidsmiljøtjenester
+
+kunder = c(
+  "Arbeids-+og+inkluderingsdepartementet",
+  "NAV",
+  "%22Barne-,+ungdoms-+og+familiedirektoratet%22",
+  "Digitaliseringsdirektoratet",
+  "Direktoratet+for+forvaltning+og+økonomistyring+(DFØ)",
+  "%22Direktoratet+for+høyere+utdanning+og+kompetanse+(HK-dir)%22",
+  "HK-dir",
+  "Distriktssenteret",
+  "Integrerings-+og+mangfoldsdirektoratet+(IMDi)",
+  "Husbanken",
+  "Norad",
+  "Utdanningsdirektoratet"
+)
+
+
+
+```
+
+
+Denne rapporten inneholder kunngjorte konkurranser og andre kunngjøringer fra `r fradato` til `r tildato` for:
+
+CPV-er:
+
+- 73000000 - Forsknings- og utviklingsvirksomhet og tilhørende konsulenttjenester)
+- 79300000 -Markeds- og økonomisk analyse; offentlig meningsmåling og statistikk
+- 79400000 - Bedriftsrådgivning og administrativ rådgivning og beslektede tjenester
+- 98342000 - Arbeidsmiljøtjenester
+
+Et knippe vanlige kunder: 
+
+- Arbeids- og inkluderingsdepartementet, 
+- NAV, 
+- Barne-, ungdoms- og familiedirektoratet, 
+- Digitaliseringsdirektoratet, 
+- Direktoratet for forvaltning og økonomistyring (DFØ), 
+- Direktoratet for høyere utdanning og kompetanse (HK-dir), HK-dir, 
+- Distriktssenteret, 
+- Integrerings- og mangfoldsdirektoratet (IMDi)
+- Husbanken,
+- Norad,
+- Utdanningsdirektoratet
+
+
+### Oppsummering av søk
+
+```{r, echo = FALSE}
+#DEL 1 - CPV 73000000
+
+#lager URL for spørring
+url = doffin_url_builder(
+  NoticeType = "",
+  Cpvs = cpv_oppslag, 
+  PublishedFromDate = fradato, 
+  PublishedToDate = tildato
+  )
+
+#henter resultater
+resultater = doffin_fetch_results(url)
+resultater$`søk` = paste0("cpv: ", cpv_oppslag)
+message(paste0("Fant ", nrow(resultater), " for CPV: ", cpv_oppslag))
+
+#DEL 2 - faste kunder
+
+
+resultater_2 = data.frame()
+
+for(i in 1:length(kunder)){
+  url = doffin_url_builder(Query = kunder[i], 
+                           NoticeType = "",
+                           PublishedFromDate = fradato, 
+                           PublishedToDate = tildato)
+  temp_resultater = doffin_fetch_results(url)
+  if(nrow(temp_resultater) == 0){
+    message("ingen funn for ", kunder[i])
+  }
+  if(nrow(temp_resultater) > 0){
+    temp_resultater$`søk` = kunder[i]
+    resultater_2 = bind_rows(resultater_2, temp_resultater)
+    message("Fant ", nrow(temp_resultater), " fra ", kunder[i])
+  }
+  Sys.sleep(5)
+}
+
+#binder sammen
+df = bind_rows(resultater, resultater_2)
+
+#sjekker for duplikater på referansenr
+test = get_dupes(df, doffin_referanse)
+
+#hvis duplikater - legg inn en distinct her.
+if(nrow(test) > 0){
+  df = distinct(df, doffin_referanse, .keep_all = TRUE)
+  message("fjernet ", nrow(test), " duplikater")
+}
+
+#slår opp ytterligere informasjon om de jeg har
+for(i in 1:nrow(df)){
+  mer_info <- read_html(paste0("https://doffin.no", df[i,7]))
+  temp_cpv = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[5]/div/span") %>%
+    html_text2()
+  if(length(temp_cpv) > 0){
+    df$cpv[i] = temp_cpv
+  }
+  if(length(temp_cpv) == 0){
+    df$cpv[i] = NA
+  }
+  temp_beskrivelse = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[9]/div") %>%
+    html_text2()
+  if(length(temp_beskrivelse) > 0){
+    df$beskrivelse[i] = temp_beskrivelse
+  }
+  if(length(temp_beskrivelse) == 0){
+    df$beskrivelse[i] = NA
+  }
+  Sys.sleep(5)
+}
+
+message("Fant totalt ", nrow(filter(df, kunngjoring_type == "Kunngjøringstype: Kunngjøring av konkurranse")), " kunngjøringer av konkurranser")
+message("Fant totalt ", nrow(filter(df, kunngjoring_type != "Kunngjøringstype: Kunngjøring av konkurranse")), " andre kunngjøringer")
+
+
+#lagrer resultater som data.frame
+write.csv(df, 
+          paste0("C:/Users/Eivind Hageberg/Documents/R/prosjekter/scrape_doffin/data/funn_", as.character(Sys.Date()), ".csv"), 
+          row.names = FALSE)
+
+#rydder opp, beholder kun df, fn
+rm(mer_info, resultater, resultater_2, temp_resultater, test, cpv_oppslag, fradato, i, kunder, temp_beskrivelse, temp_cpv, tildato, url)
+
+
+```
+
+
+
+```{r, include = FALSE}
+#her kan en gjøre bearbeiding av dataene
+
+#hekter på beskrivelser av cpv-kodene
+df = left_join(df, cpv_koder, by = "cpv")
+
+#velger ut variablene jeg trenger, og gjør labels lesbare, lager en lenke, sorterer etter tilbudsfrist
+output = select(df, `Kunngjøringstype` = kunngjoring_type, Prosjektnavn = navn, `Oppdragsgiver` = publisert_av, Kunngjøringsdato = kunngjoring_dato, Tilbudsfrist = tilbudsfrist_dato, CPV = cpv, `CPV-navn` = DA, Lenke = lenke, Beskrivelse = beskrivelse) %>%
+  mutate(
+    Kunngjøringsdato = str_remove(Kunngjøringsdato, fixed("Kunngjøringsdato: ")),
+    Kunngjøringstype = str_remove(Kunngjøringstype, fixed("Kunngjøringstype: ")),
+    Lenke = paste0("https://www.doffin.no", Lenke),
+    Oppdragsgiver = str_remove(Oppdragsgiver, fixed("\r Publisert av:\r "))
+  ) %>%
+  arrange(., Tilbudsfrist) 
+
+#splitter i to data.frames.
+
+output_konkurranser = filter(output, Kunngjøringstype == "Kunngjøring av konkurranse")
+output_andre = filter(output, Kunngjøringstype != "Kunngjøring av konkurranse")
+
+```
+
+### Kunngjorte konkurranser siste 7 dager
+
+Kunngjøringer med tidligste tilbudsfrist kommer først.
+
+```{r, results='asis', echo = FALSE}
+
+
+for(i in 1:nrow(output_konkurranser)){
+  temp = slice(output_konkurranser, i)
+  temp = t(temp)
+  cat("\n Funn nr. ", i, "\n" )
+  print(kable(temp, "html", escape = FALSE) %>% kable_styling(bootstrap_options = c("hover", "condensed")))
+  cat("  \n  ")
+}
+```
+
+### Andre kunngjøringer siste 7 dager
+
+Kunngjøringer med tidligste tilbudsfrist kommer først.
+
+```{r, results='asis', echo = FALSE}
+
+
+for(i in 1:nrow(output_andre)){
+  temp = slice(output_andre, i)
+  temp = t(temp)
+  cat("\n Funn nr. ", i, "\n" )
+  print(kable(temp, "html", escape = FALSE) %>% kable_styling(bootstrap_options = c("hover", "condensed")))
+  cat("  \n  ")
+}
+
