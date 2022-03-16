@@ -12,9 +12,10 @@ filnavn = paste0("Doffin_rapport_",as.character(Sys.Date()), ".html")
 
 #første forsøk
 #render(input = "report_test.Rmd", output_format = "html_document")
-#gir en del output fra siste chunk i viewer, ikke html-dokumentet. det er jo feil?
-#leser meg opp pÃ¥ https://bookdown.org/yihui/rmarkdown-cookbook/rmarkdown-render.html
-#det var noe med miljÃ¸et, og at jeg bÃ¸r kjÃ¸re det fra et reint miljÃ¸?
+#gir en del output fra siste chunk i viewer, ikke html-dokumentet. det er jo feil
+#leser meg opp på https://bookdown.org/yihui/rmarkdown-cookbook/rmarkdown-render.html
+#bør kjøres fra et rent miljø.
+
 #knytt
 xfun::Rscript_call(
   rmarkdown::render,
@@ -24,8 +25,10 @@ xfun::Rscript_call(
        output_file = filnavn)
 )
 
+#henter innloggingsinfo fra eksternt og lokalt lagra sted
+dw = config::get(file = "config/config.yml")
 
-
+#send epost
 send.mail(from = "automatisk.rapportering@gmail.com",
           to = c("eivind.hageberg@ideas2evidence.com", "oivind.skjervheim@ideas2evidence.com", "inger.nordhagen@ideas2evidence.com"),
           replyTo = "eivind.hageberg@ideas2evidence.com",
