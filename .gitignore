@@ -48,7 +48,3 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
-# Mapper med data og utvikla rapporter
-
-data/
-rapporter/ 
