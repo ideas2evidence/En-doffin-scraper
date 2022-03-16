@@ -1,6 +1,8 @@
 ---
 title: "En kort proof-of-concept for en Doffin-scraper"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 Målet er å lage en webscraper som regelmessig henter data fra Doffin om relevante utlysninger. Det ser ut til å funke fint - dermed kan en med litt mer jobb, evt. jevnlig kjøring, lage seg et system som automatisk finner nye aktuelle utlysninger når de lyses ut.
@@ -266,7 +268,7 @@ for(i in 1:length(kunder)){
 
 Hvis det finnes en ferdigdefinert liste over kunder en skal slå opp kan en bruke det. Som f.esk. fra mappene med tidligere utforma tilbud. 
 
-```{r}
+```{r, eval = FALSE}
 
 kunder = dir("D:/Gamle tilbud") #107 navn her - dette kan bli litt mye, 107*5 = 9 minutt venting + arbeidstid.
 #må erstatte mellomrom med + 
@@ -275,7 +277,7 @@ kunder = str_replace_all(kunder, "\\s", "+")
 
 ```
 
-```{r}
+```{r, eval = FALSE}
 resultater = data.frame()
 
 for(i in 1:length(kunder)){
@@ -294,7 +296,7 @@ for(i in 1:length(kunder)){
 
 ```
 
-```{r}
+```{r, eval = FALSE}
 #sjekk for duplikater
 duplikater = get_dupes(resultater, doffin_referanse)
 #fjerner duplikater, beholder første forekomst. husk .keep_all = TRUE for å beholde faktisk informasjon...
@@ -319,8 +321,6 @@ url = doffin_url_builder(
 
 resultater = doffin_fetch_results(url)
 
-#skriver ut resultatet
-write.csv(resultater, "resultater.csv", row.names = FALSE)
 ```
 
 
@@ -410,14 +410,14 @@ Oppretter en test-epostadresse i Google. MailR krever rJava, som igjen krever at
 ```{r, eval = FALSE}
 library(mailR)
 
-send.mail(from = "automatisk.rapportering@gmail.com",
-          to = "eivind.hageberg@gmail.com",
+send.mail(from = "##",
+          to = "##",
           subject = "Testepost",
           body = "Innhold",
           attach.files = "resultater.csv",
-          smtp = list(host.name = "smtp.gmail.com", 
-                      port = 465, 
-                      user.name = "automatisk.rapportering", 
+          smtp = list(host.name = "##", 
+                      port = ##, 
+                      user.name = "##", 
                       passwd = "#######", 
                       ssl = TRUE),
           authenticate = TRUE,
