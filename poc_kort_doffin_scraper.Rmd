@@ -1,8 +1,6 @@
 ---
 title: "En kort proof-of-concept for en Doffin-scraper"
-output:
-  html_document:
-    df_print: paged
+output: github_document 
 ---
 
 Målet er å lage en webscraper som regelmessig henter data fra Doffin om relevante utlysninger. Det ser ut til å funke fint - dermed kan en med litt mer jobb, evt. jevnlig kjøring, lage seg et system som automatisk finner nye aktuelle utlysninger når de lyses ut.
