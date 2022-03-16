@@ -1,10 +1,10 @@
 # En Doffin-scraper 
 
-Noe enkel R-kode for Ã¥ sÃ¸ke pÃ¥ Doffin.no etter ulike oppfÃ¸ringer og formatere funnene som et nyhetsbrev,
+Noe enkel R-kode for å søke på [Doffin.no](https://doffin.no/) etter ulike oppføringer og formatere funnene som et nyhetsbrev,
 
-[b]Inneholder:[b]
+*Inneholder:*
 
-- [En kort proof-of-concept](poc_kort_doffin_scraper.md) som gjennomgÃ¥r hvordan innhold fra doffin.no hentes ut.
-- [Et script](doffin_scraper_script.R) som har de nÃ¸dvendige funksjonene og kjÃ¸rer dem.
+- [En kort proof-of-concept](poc_kort_doffin_scraper.md) som gjennomgår hvordan innhold fra doffin.no hentes ut.
+- [Et script](doffin_scraper_script.R) som har de nødvendige funksjonene og kjører dem.
 - [En Rmd-fil som har det samme som scriptet, men formaterer det litt penere for lesing](https://github.com/ideas2evidence/En-doffin-scraper/blob/main/report_test.Rmd)
-- [Et annet script](newsletter_creator.R) som kjÃ¸rer den automatiske rapporten, og sender den pÃ¥ epost til predefinerte mottakere. 
+- [Et annet script](newsletter_creator.R) som kjøer den automatiske rapporten, og sender den på epost til predefinerte mottakere. 
