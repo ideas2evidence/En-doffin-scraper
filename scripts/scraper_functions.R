@@ -86,3 +86,68 @@ doffin_fetch_results = function(url){
       html_text()
   )
 }
+#FOR LANGE RESULTATER
+#Når lista med resulater overstiger 100 treff, bruk denne
+
+doffin_fetch_results_long = function(url){
+  #henter html-fil
+  temp_html = read_html(url)
+  
+  #henter ut pagineringselementet fra html-sida
+  paginering = html_elements(temp_html, 
+                             xpath = "//*[@id='content']/div/article[3]/div[101]")
+  #henter sidetallet fra denne, trekker ut teksten, og konverterer tallet til et tall.
+  antall_sider = html_element(paginering, xpath = "ul[2]/li[3]") %>%
+    html_text2() %>%
+    parse_number(.)
+  
+  #det ser ut til at hvis denne er 1, så får jeg ikke noe ut av skrapinga her.
+  if(length(antall_sider) == 0){
+    antall_sider = 1
+  }
+  
+  message("Søket har ", antall_sider, " sider med treff")
+  
+  #henter ut PageNumber-egenskapen fra urlen
+  #str_locate(url, fixed("PageNumber="))
+  url_pagenumber = parse_number(str_split(str_split(url, fixed("&"))[[1]][2], fixed("="))[[1]][2])
+  
+  temp_df_long = data.frame()
+  
+  for(i in 1:antall_sider){
+    message("Henter side nr. ", i)
+    #må modifisere PageNumber-egenskapen i url
+    url_ny = str_replace(url, paste0("PageNumber=",url_pagenumber), paste0("PageNumber=",i))
+    #henter html-fil
+    temp_html = read_html(url_ny)
+    #henter ut kun utlysninger fra html-fila
+    kun_utlysninger = html_elements(temp_html, 
+                                    xpath = "//*[@id='content']/div/article[3]/div[@class = 'notice-search-item']")
+    #setter sammen datasettet
+    temp_df = data.frame(
+      doffin_referanse = html_element(kun_utlysninger, 
+                                      xpath = "div[@class = 'right-col']/div[1]") %>%
+        html_text2(), 
+      navn = html_element(kun_utlysninger, 
+                          xpath = "div[@class = 'notice-search-item-header']/a[contains(@href, 'Notice')]") %>%
+        html_text2(),
+      publisert_av = html_element(kun_utlysninger, xpath = "div[@class = 'left-col']/div[1]") %>%
+        html_text2(),
+      kunngjoring_type = html_element(kun_utlysninger, xpath = "div[@class = 'left-col']/div[2]") %>%
+        html_text2(), 
+      kunngjoring_dato = html_element(kun_utlysninger, xpath = "div[@class = 'right-col']/div[last()]") %>%
+        html_text2(), 
+      tilbudsfrist_dato = html_element(kun_utlysninger, xpath = "div[@class = 'right-col']/div[2]/span") %>%
+        html_text2(), 
+      lenke = html_element(kun_utlysninger, 
+                           xpath = "div[@class = 'notice-search-item-header']/a[contains(@href, 'Notice')]/@href") %>%
+        html_text()
+    )
+    temp_df_long = bind_rows(temp_df_long, temp_df)
+    Sys.sleep(5)
+  }
+  if(nrow(temp_df_long) == 1000){
+    warning("Søket har funnet 1000 treff, og kan ha nådd maksgrensa for mulige treff")
+  }
+  return(temp_df_long)
+}

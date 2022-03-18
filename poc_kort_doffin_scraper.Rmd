@@ -193,6 +193,7 @@ Denne funksjonen har en del forbedringspotensiale:
 - hvis lista kun_utlysninger er like lang som PageSize, er det fare for at det er flere sider med resultater. Dette burde en advare om, og ideelt sett også håndtere. Kjapp kikk på det:
 
 ```{r}
+
 url = doffin_url_builder()
 temp_html = read_html(url)
 #henter pagineringselementet
