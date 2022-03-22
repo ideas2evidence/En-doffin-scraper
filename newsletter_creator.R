@@ -3,18 +3,15 @@
 #dette scriptet lager og sender et nyhetsbrev
 
 #bibliotek
-library(rmarkdown) #for rapporten, rapporten laster også egne bibliotek
+library(rmarkdown) #for rapporten, rapporten laster ogs? egne bibliotek
 library(mailR) #for mail, krever Java
 library(config) #for henting av eksternt - og lokalt - lagra data
 
 #filnavn
 filnavn = paste0("Doffin_rapport_",as.character(Sys.Date()), ".html")
 
-#første forsøk
-#render(input = "report_test.Rmd", output_format = "html_document")
-#gir en del output fra siste chunk i viewer, ikke html-dokumentet. det er jo feil
-#leser meg opp på https://bookdown.org/yihui/rmarkdown-cookbook/rmarkdown-render.html
-#bør kjøres fra et rent miljø.
+#kjører rmarkdown::render i xfun for å ha et rein miljø (uten får en en del output i viewer, ikke html-dokumentet)
+#jf. https://bookdown.org/yihui/rmarkdown-cookbook/rmarkdown-render.html
 
 #knytt
 xfun::Rscript_call(
@@ -26,7 +23,7 @@ xfun::Rscript_call(
 )
 
 #henter innloggingsinfo fra eksternt og lokalt lagra sted
-dw = config::get(file = "config/config.yml")
+dw = config::get(file = "../config/config.yml")
 
 #send epost
 send.mail(from = "automatisk.rapportering@gmail.com",

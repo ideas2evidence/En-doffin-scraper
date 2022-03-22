@@ -15,6 +15,7 @@ library(knitr)
 library(rvest)
 library(janitor)
 library(lubridate)
+library(readxl)
 
 #støttefunksjoner
 source("scripts/scraper_functions.R")  
@@ -24,7 +25,26 @@ options(scipen = 100)
 tema = theme_set(theme_minimal())
 
 #Hvis et kurrant datasett eksisterer, bruk det  istedet for å laste inn alt mulig.
-df <- read_delim("data/doffin_foucpv_17032020-17032022.csv", delim = ";", escape_double = FALSE, trim_ws = TRUE)
+df_fou <- read_delim("data/doffin_foucpv_17032020-17032022.csv", delim = ";", escape_double = FALSE, trim_ws = TRUE)
+df_alle <- read_delim("data/doffin_alle_19022022-19032022.csv", delim = ";", escape_double = FALSE, 
+                      col_types = cols(kunngjoring_dato = col_date(format = "%Y-%m-%d"),
+                                       tilbudsfrist_dato = col_date(format = "%Y-%m-%d"),
+                                       cpv = col_character()), 
+                      trim_ws = TRUE)
+
+#støttedata
+
+#CPV-koder
+#gjør også trestrukturen litt mer eksplisitt for oppsummeringsformål
+cpv_koder = read_excel("input/cpv_2008_ver_2013.xlsx", col_types = c("text", "text", "skip")) %>%
+  separate(., CODE, into =c("cpv", NA), sep = 8) %>% #tar vekk nr. 9, som er en verifikasjonskode
+  separate(., cpv, into = c("cpv_divisjon", NA), sep = 2, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_gruppe", NA), sep = 3, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_klasse", NA), sep = 4, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_kategori", NA), sep = 5, remove = FALSE)
+
+cpv_divisjon = select(cpv_koder, cpv_divisjon, DA) %>%
+  distinct(cpv_divisjon, .keep_all = TRUE)
 
 
 ```
@@ -170,24 +190,194 @@ write_excel_csv2(df, "data/funn_stort_datasett.csv")
 
 ```
 
+```{r, eval = FALSE}
+#DEL 2 - ALLE UTLYSNINGER
+#den siste måneden
 
-# Grunnleggende om datasettet
+resultater = data.frame()
 
-Her har vi 852 kunngjorte konkurranser med CPV-koden 73000000 - Forskning og utvikling, fra 17. mars 2020 til 17. mars 2022. 
+#beregner hvor mange 7 dagers perioder jeg trenger mellom i dag og en anna dato
+lengde = ceiling(as.numeric(difftime(as.Date(Sys.Date()), as.Date("19.02.2022", "%d.%m.%Y"), units = "days")) / 7)
+
+for(i in 0:lengde){
+  #lager dato
+  tildato = format((Sys.Date() - (7*i)), "%d.%m.%Y")
+  fradato = format((Sys.Date() - (7*(i+1))), "%d.%m.%Y")
+  
+  #lager URL for spørring
+  url = doffin_url_builder(
+    NoticeType = "2",
+    PublishedFromDate = fradato, 
+    PublishedToDate = tildato,
+    IncludeExpired = "true"
+  )
+  temp_resultater = doffin_fetch_results_long(url)
+  resultater = bind_rows(resultater, temp_resultater)
+}
+
+#fjerner overflødig tekst
+resultater = mutate(resultater,
+              doffin_referanse = str_remove(doffin_referanse, fixed("Doffin referanse: ")),
+              publisert_av = str_remove(publisert_av, fixed("\r Publisert av:\r ")),
+              publisert_av = str_remove_all(publisert_av, fixed("\r")),
+              kunngjoring_type = str_remove(kunngjoring_type, fixed("Kunngjøringstype: ")),
+              kunngjoring_dato = str_remove(kunngjoring_dato, fixed("Kunngjøringsdato: "))
+              )
+
+#beriker med beløp og CPV
+
+for(i in 1:nrow(resultater)){
+  mer_info <- read_html(paste0("https://doffin.no", resultater[i,7]))
+  
+  temp_cpv = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[5]/div/span") %>%
+    html_text2()
+  if(length(temp_cpv) > 0){
+    resultater$cpv[i] = temp_cpv
+  }
+  if(length(temp_cpv) == 0){
+    resultater$cpv[i] = NA
+  }
+
+  #denne xpathen ser ut til å feile og finne teksten "Denne anskaffelsen er delt opp i delkontrakter:"  i noen tilfeller? kanskje særlig der beløpet ikke er nevnt? Men gir na da.
+  temp_sum = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[11]") %>%
+    html_text2() %>%
+    #punktum som punktum lager problemer, må fjernes (tror disse bare kommer som inkl og ekskl)
+    str_remove(., fixed("ekskl.")) %>% 
+    str_remove(., fixed("inkl.")) %>%
+    parse_number()
+  
+  
+  if(length(temp_sum) > 0){
+    resultater$estimert_totalverdi[i] = temp_sum
+  }
+  if(length(temp_sum) == 0){
+    resultater$estimert_totalverdi[i] = NA
+  }
+  message("resultat nr. ", i)
+  Sys.sleep(2)
+}
+
+test = get_dupes(resultater)
+
+#litt databearbeidelse
+
+#i fravær av en grunn, slettes dupliakter
+df = distinct(resultater, .keep_all = TRUE)
+
+df = mutate(df,
+            kunngjoring_dato = as.Date(kunngjoring_dato),
+            tilbudsfrist_dato = as.Date(tilbudsfrist_dato),
+            kunngjort_uke = week(kunngjoring_dato),
+            kunngjort_år = year(kunngjoring_dato),
+            fristlengde = as.numeric(difftime(tilbudsfrist_dato, kunngjoring_dato, units = "days")),
+            #får en del usannsynlige frister som sannsynligvis er feil her
+            fristlengde = ifelse(fristlengde > 200, NA, fristlengde),
+            kunngjort_ukedag = wday(kunngjoring_dato, label = TRUE)
+            )
+#lagrer
+write_excel_csv2(df, "data/doffin_alle_19022022-19032022.csv")
+
+```
 
 
-# Når lyses prosjektene ut?
+# Grunnleggende om datasettene
+
+Her har vi: 
+
+- 1 165 kunngjorte konkurranser med alle CPV-koder, fra 19. februar 2022 til 19. mars 2022.
+- 852 kunngjorte konkurranser med CPV-koden 73000000 - Forskning og utvikling, fra 17. mars 2020 til 17. mars 2022. 
+
+# Kontekst for FoU-prosjektene
+
+## Hvor mange konkurranser kunngjøres daglig/ukentlig?
+
 
 ```{r}
 #dato
-temp = group_by(df, kunngjoring_dato) %>%
+temp = group_by(df_alle, kunngjoring_dato) %>%
+  summarise(antall = n())
+
+ggplot(data = temp) +
+  geom_line(aes(x = kunngjoring_dato, y = antall))
+
+#ukedag
+temp = group_by(df_alle, kunngjort_ukedag) %>%
+  summarise(antall = n())
+
+ggplot(data = temp) +
+  geom_col(aes(x = kunngjort_ukedag, y = antall))
+
+
+#uke
+temp = group_by(df_alle, kunngjort_uke) %>%
+  summarise(antall = n())
+
+ggplot(data = temp) +
+  geom_col(aes(x = kunngjort_uke, y = antall))
+
+
+
+```
+
+
+## Hvordan fordeler de seg mellom CPV-kodene? Hvor stor er oppdrag på FoU-CPVen?
+
+CPV-kodefordelinga er veldig høyreskjeiv - de aller-aller fleste kodene er kun benytta 1 gang som hovedkode den siste måneden
+
+```{r}
+#teller opp etter cpv-kode
+temp = group_by(df_alle, cpv) %>%
+  summarise(antall = n()) %>%
+  left_join(., select(cpv_koder, cpv, cpv_divisjon, DA), by = c("cpv" = "cpv")) %>%
+  arrange(desc(antall))
+
+summary(temp$antall)
+
+tabell = slice_max(temp, order_by = antall, n = 20)
+knitr::kable(tabell, caption = "20 mest brukte CPV-koder siste måneden")
+
+#teller opp etter cpv-divisjon
+temp = group_by(temp, cpv_divisjon) %>%
+  summarise(antall = sum(antall, na.rm = TRUE)) %>%
+  left_join(., cpv_divisjon) %>%
+  arrange(desc(antall))
+
+tabell = slice_max(temp, order_by = antall, n = 20)
+knitr::kable(tabell, caption = "20 mest brukte CPV-divisjoner siste måneden")
+
+
+```
+
+CPV-kodene har et hierarkisk forhold.
+
+## Hvem kunngjør?
+
+```{r}
+temp = group_by(df_alle, publisert_av) %>%
+  summarise(antall = n()) %>%
+  arrange(desc(antall))
+
+tabell = slice_max(temp, order_by = antall, n = 20)
+knitr::kable(tabell)
+
+
+```
+
+# FoU-utlysninger mer spesifikt
+
+
+## Når lyses prosjektene ut?
+
+```{r}
+#dato
+temp = group_by(df_fou, kunngjoring_dato) %>%
   summarise(antall_kunngjøringer = n())
 
 ggplot(data = temp) +
   geom_line(aes(x = kunngjoring_dato, y = antall_kunngjøringer))
 
 #uke
-temp = group_by(df, kunngjort_år, kunngjort_uke) %>%
+temp = group_by(df_fou, kunngjort_år, kunngjort_uke) %>%
   summarise(antall_kunngjøringer = n())
 
 ggplot(data = temp) +
@@ -200,22 +390,22 @@ ggplot(data = temp) +
 ```
 
 
-# Lengde på frister
+## Lengde på frister
 
 ```{r}
-summary(df$fristlengde)
+summary(df_fou$fristlengde)
 
-ggplot(data = df, aes(x = fristlengde)) +
+ggplot(data = df_fou, aes(x = fristlengde)) +
   geom_histogram(binwidth = 1) +
   labs(title = "Tid fra kunngjøring til frist for leveranse", subtitle = "Alle cpv 73000000-utlysninger på doffin fra 17. mars 2020 til 17. mars 2022",
        x = "Antall dager", y = "Antall utlysninger"
        )
 ```
 
-# Antall oppdrag etter oppdragsgiver (de største )
+## Antall oppdrag etter oppdragsgiver (de største )
 
 ```{r}
-temp = group_by(df, publisert_av) %>%
+temp = group_by(df_fou, publisert_av) %>%
   summarise(
     antall_oppdrag = n()
   )
@@ -229,7 +419,7 @@ tabell = slice_max(temp, antall_oppdrag, n = 20)
 knitr::kable(tabell)
 
 #og etter år
-temp = group_by(df, kunngjort_år, publisert_av) %>%
+temp = group_by(df_fou, kunngjort_år, publisert_av) %>%
   summarise(
     antall_oppdrag = n()
   ) %>%
