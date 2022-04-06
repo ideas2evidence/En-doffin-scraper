@@ -11,16 +11,20 @@ POC - Doffin-analyse
         på
         FoU-CPVen?](#hvordan-fordeler-de-seg-mellom-cpv-kodene-hvor-stor-er-oppdrag-på-fou-cpven)
     -   [Hvem kunngjør?](#hvem-kunngjør)
+    -   [Estimert verdi på kontraktene](#estimert-verdi-på-kontraktene)
 -   [FoU-utlysninger mer spesifikt](#fou-utlysninger-mer-spesifikt)
     -   [Når lyses prosjektene ut?](#når-lyses-prosjektene-ut)
     -   [Lengde på frister](#lengde-på-frister)
     -   [Antall oppdrag etter oppdragsgiver (de største
         )](#antall-oppdrag-etter-oppdragsgiver-de-største-)
+    -   [Estimert totalverdi](#estimert-totalverdi)
 
 ``` r
 #biblioteker
 library(tidyverse)
 ```
+
+    ## Warning: package 'tidyverse' was built under R version 4.1.3
 
     ## -- Attaching packages --------------------------------------- tidyverse 1.3.1 --
 
@@ -69,13 +73,24 @@ library(lubridate)
 
 ``` r
 library(readxl)
+library(i2eR)
+library(i2eplot)
+```
 
+    ## 
+    ## Attaching package: 'i2eplot'
+
+    ## The following object is masked from 'package:graphics':
+    ## 
+    ##     barplot
+
+``` r
 #støttefunksjoner
 source("scripts/scraper_functions.R")  
 
 #valg
 options(scipen = 100)
-tema = theme_set(theme_minimal())
+tema = theme_set(theme_i2e())
 
 #Hvis et kurrant datasett eksisterer, bruk det  istedet for å laste inn alt mulig.
 df_fou <- read_delim("data/doffin_foucpv_17032020-17032022.csv", delim = ";", escape_double = FALSE, trim_ws = TRUE)
@@ -348,6 +363,46 @@ Her har vi:
 -   852 kunngjorte konkurranser med CPV-koden 73000000 - Forskning og
     utvikling, fra 17. mars 2020 til 17. mars 2022.
 
+``` r
+glimpse(df_alle)
+```
+
+    ## Rows: 1,165
+    ## Columns: 13
+    ## $ doffin_referanse    <chr> "2022-315368", "2022-353584", "2022-399746", "2022~
+    ## $ navn                <chr> "Oppdrag innen kommunikasjon og strategier for Øst~
+    ## $ publisert_av        <chr> "ØSTFOLD AVFALLSSORTERING IKS", "Movar Iks", "SYKE~
+    ## $ kunngjoring_type    <chr> "Kunngjøring av konkurranse", "Kunngjøring av konk~
+    ## $ kunngjoring_dato    <date> 2022-03-19, 2022-03-19, 2022-03-19, 2022-03-19, 2~
+    ## $ tilbudsfrist_dato   <date> 2022-04-29, 2022-04-29, 2022-04-21, 2022-04-19, 2~
+    ## $ lenke               <chr> "/Notice/Details/2022-315368", "/Notice/Details/20~
+    ## $ cpv                 <chr> "79340000", "90513700", "38000000", "66114000", "2~
+    ## $ estimert_totalverdi <dbl> 65000000, 80000000, NA, 100000000, 40000000, 72000~
+    ## $ kunngjort_uke       <dbl> 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12~
+    ## $ kunngjort_år        <dbl> 2022, 2022, 2022, 2022, 2022, 2022, 2022, 2022, 20~
+    ## $ fristlengde         <dbl> 41, 41, 33, 31, 34, 33, 46, 34, 31, 37, 46, 34, 37~
+    ## $ kunngjort_ukedag    <chr> "lør\\.", "lør\\.", "lør\\.", "lør\\.", "lør\\.", ~
+
+``` r
+glimpse(df_fou)
+```
+
+    ## Rows: 852
+    ## Columns: 13
+    ## $ doffin_referanse    <chr> "2022-313886", "2022-364984", "2022-389096", "2022~
+    ## $ navn                <chr> "Evaluering av reglene om konkurransebegrensende a~
+    ## $ publisert_av        <chr> "Arbeids- og inkluderingsdepartementet", "Nærings-~
+    ## $ kunngjoring_type    <chr> "Kunngjøring av konkurranse", "Kunngjøring av konk~
+    ## $ kunngjoring_dato    <date> 2022-03-17, 2022-03-17, 2022-03-16, 2022-03-15, 2~
+    ## $ tilbudsfrist_dato   <date> 2022-04-21, 2022-04-20, 2022-04-25, 2022-03-30, 2~
+    ## $ lenke               <chr> "/Notice/Details/2022-313886", "/Notice/Details/20~
+    ## $ cpv                 <chr> "73000000", "72221000", "73200000", "73200000", "7~
+    ## $ beskrivelse         <chr> "Arbeids- og inkluderingsdepartementet ønsker å in~
+    ## $ estimert_totalverdi <dbl> 1500000, 1500000, 400000, 300000, 550000, NA, 5000~
+    ## $ kunngjort_uke       <dbl> 11, 11, 11, 11, 11, 11, 11, 11, 10, 10, 10, 9, 9, ~
+    ## $ kunngjort_år        <dbl> 2022, 2022, 2022, 2022, 2022, 2022, 2022, 2022, 20~
+    ## $ fristlengde         <dbl> 35, 34, 40, 15, 51, 30, 44, 30, 28, 28, 29, 27, 53~
+
 # Kontekst for FoU-prosjektene
 
 ## Hvor mange konkurranser kunngjøres daglig/ukentlig?
@@ -357,22 +412,28 @@ Her har vi:
 temp = group_by(df_alle, kunngjoring_dato) %>%
   summarise(antall = n())
 
-ggplot(data = temp) +
-  geom_line(aes(x = kunngjoring_dato, y = antall))
+#ggplot(data = temp) +
+#  geom_line(aes(x = kunngjoring_dato, y = antall))
+
+lineplot(data = temp, aes(x = kunngjoring_dato, y = antall)) +
+  labs(title = "Antall kunngjøringer pr. dag siste måned", y = "Antall", x = "Dato")
 ```
 
-![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
 
 ``` r
 #ukedag
 temp = group_by(df_alle, kunngjort_ukedag) %>%
   summarise(antall = n())
 
-ggplot(data = temp) +
-  geom_col(aes(x = kunngjort_ukedag, y = antall))
+#ggplot(data = temp) +
+#  geom_col(aes(x = kunngjort_ukedag, y = antall))
+
+barplot(data = temp, aes(x = kunngjort_ukedag, y = antall, label = antall), flip = FALSE, ylim = c(0, 250)) +
+  labs(title = "Antall kunngjøringer pr. ukedag")
 ```
 
-![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-9-2.png)<!-- -->
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-10-2.png)<!-- -->
 
 ``` r
 #uke
@@ -383,7 +444,7 @@ ggplot(data = temp) +
   geom_col(aes(x = kunngjort_uke, y = antall))
 ```
 
-![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-9-3.png)<!-- -->
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-10-3.png)<!-- -->
 
 ## Hvordan fordeler de seg mellom CPV-kodene? Hvor stor er oppdrag på FoU-CPVen?
 
@@ -476,6 +537,13 @@ knitr::kable(tabell, caption = "20 mest brukte CPV-divisjoner siste måneden")
 
 20 mest brukte CPV-divisjoner siste måneden
 
+``` r
+ggplot(data = temp) +
+  geom_histogram(aes(x = antall), binwidth = 2)
+```
+
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-11-1.png)<!-- -->
+
 CPV-kodene har et hierarkisk forhold.
 
 ## Hvem kunngjør?
@@ -515,6 +583,16 @@ knitr::kable(tabell)
 | Trondheim kommune                              |     10 |
 | Trøndelag fylkeskommune                        |     10 |
 
+## Estimert verdi på kontraktene
+
+Forventer topper rundt terskelverdi
+
+``` r
+temp = filter(df_alle, is.na(estimert_totalverdi) == FALSE)
+
+#disse tallene er alt for store. har komma slått feil ut?
+```
+
 # FoU-utlysninger mer spesifikt
 
 ## Når lyses prosjektene ut?
@@ -524,13 +602,10 @@ knitr::kable(tabell)
 temp = group_by(df_fou, kunngjoring_dato) %>%
   summarise(antall_kunngjøringer = n())
 
-ggplot(data = temp) +
-  geom_line(aes(x = kunngjoring_dato, y = antall_kunngjøringer))
-```
+#blir alt for smått
+#ggplot(data = temp) +
+#  geom_line(aes(x = kunngjoring_dato, y = antall_kunngjøringer))
 
-![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
-
-``` r
 #uke
 temp = group_by(df_fou, kunngjort_år, kunngjort_uke) %>%
   summarise(antall_kunngjøringer = n())
@@ -549,7 +624,25 @@ ggplot(data = temp) +
 
     ## `geom_smooth()` using method = 'loess' and formula 'y ~ x'
 
-![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-12-2.png)<!-- -->
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
+
+``` r
+ggplot(data = temp, aes(x = kunngjort_uke, y = antall_kunngjøringer, colour = as.factor(kunngjort_år))) +
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_x_continuous(breaks = seq(from = 0, to = 52, by = 4), minor_breaks = NULL) +
+  scale_y_continuous(limits = c(0, 15)) +
+  labs(x = "Uke", y = "Antall kunngjøringer i uka", colour = "Kunngjort år", title = "Kunngjøringer av FoU-prosjekter på Doffin etter uke", 
+       subtitle = "Alle FoU-kunngjøringer 2 siste år")
+```
+
+    ## `geom_smooth()` using method = 'loess' and formula 'y ~ x'
+
+    ## Warning: Removed 3 rows containing non-finite values (stat_smooth).
+
+    ## Warning: Removed 3 rows containing missing values (geom_point).
+
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-14-2.png)<!-- -->
 
 ## Lengde på frister
 
@@ -570,7 +663,7 @@ ggplot(data = df_fou, aes(x = fristlengde)) +
 
     ## Warning: Removed 21 rows containing non-finite values (stat_bin).
 
-![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-13-1.png)<!-- -->
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-15-1.png)<!-- -->
 
 ## Antall oppdrag etter oppdragsgiver (de største )
 
@@ -591,7 +684,7 @@ ggplot(data = temp, aes(x = antall_oppdrag)) +
   geom_histogram(binwidth = 1)
 ```
 
-![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-14-1.png)<!-- -->
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-16-1.png)<!-- -->
 
 ``` r
 tabell = slice_max(temp, antall_oppdrag, n = 20)
@@ -651,3 +744,21 @@ knitr::kable(tabell)
 | Utdanningsdirektoratet                               |   14 |   20 |    2 |
 | Nordland fylkeskommune                               |   NA |    3 |    2 |
 | Kultur- og likestillingsdepartementet                |   NA |   NA |    2 |
+
+## Estimert totalverdi
+
+``` r
+summary(df_fou$estimert_totalverdi)
+```
+
+    ##      Min.   1st Qu.    Median      Mean   3rd Qu.      Max.      NA's 
+    ##         1    700000   1262500  13071727   3212500 900000000       236
+
+``` r
+temp = filter(df_fou, is.na(estimert_totalverdi) == FALSE)
+
+ggplot(data = temp) +
+  geom_histogram(aes(x = estimert_totalverdi), binwidth = 500000)
+```
+
+![](poc_doffin_analyse_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->

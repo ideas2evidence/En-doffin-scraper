@@ -8,6 +8,7 @@ Noe enkel R-kode for å søke på [Doffin.no](https://doffin.no/) etter ulike oppfø
 - [Et script](doffin_scraper_script.R) som har de nødvendige funksjonene og kjører dem.
 - [En Rmd-fil som har det samme som scriptet, men formaterer det litt penere for lesing](report_test.Rmd). Et eksempel på en slik rapport ligger <a href="https://rawcdn.githack.com/ideas2evidence/En-doffin-scraper/74ff77f6a1cb36f37ca0186c11bcd6c51fd038ac/rapporter/Doffin_rapport_2022-03-14.html" target = "_blank">her borte.</a>
 - [Et annet script](newsletter_creator.R) som kjører den automatiske rapporten, og sender den på epost til predefinerte mottakere. 
+- [Et eksempel på en analyse](poc_doffin_analyse.md) - eller i hvert fall noen enkle grafer.
 
 *Videre utviklingsmuligheter*: 
 - Regelmessig kjøring med TaskscheduleR e.l.

@@ -16,13 +16,15 @@ library(rvest)
 library(janitor)
 library(lubridate)
 library(readxl)
+library(i2eR)
+library(i2eplot)
 
 #støttefunksjoner
 source("scripts/scraper_functions.R")  
 
 #valg
 options(scipen = 100)
-tema = theme_set(theme_minimal())
+tema = theme_set(theme_i2e())
 
 #Hvis et kurrant datasett eksisterer, bruk det  istedet for å laste inn alt mulig.
 df_fou <- read_delim("data/doffin_foucpv_17032020-17032022.csv", delim = ";", escape_double = FALSE, trim_ws = TRUE)
@@ -287,6 +289,12 @@ Her har vi:
 - 1 165 kunngjorte konkurranser med alle CPV-koder, fra 19. februar 2022 til 19. mars 2022.
 - 852 kunngjorte konkurranser med CPV-koden 73000000 - Forskning og utvikling, fra 17. mars 2020 til 17. mars 2022. 
 
+```{r}
+glimpse(df_alle)
+glimpse(df_fou)
+```
+
+
 # Kontekst for FoU-prosjektene
 
 ## Hvor mange konkurranser kunngjøres daglig/ukentlig?
@@ -297,16 +305,21 @@ Her har vi:
 temp = group_by(df_alle, kunngjoring_dato) %>%
   summarise(antall = n())
 
-ggplot(data = temp) +
-  geom_line(aes(x = kunngjoring_dato, y = antall))
+#ggplot(data = temp) +
+#  geom_line(aes(x = kunngjoring_dato, y = antall))
+
+lineplot(data = temp, aes(x = kunngjoring_dato, y = antall)) +
+  labs(title = "Antall kunngjøringer pr. dag siste måned", y = "Antall", x = "Dato")
 
 #ukedag
 temp = group_by(df_alle, kunngjort_ukedag) %>%
   summarise(antall = n())
 
-ggplot(data = temp) +
-  geom_col(aes(x = kunngjort_ukedag, y = antall))
+#ggplot(data = temp) +
+#  geom_col(aes(x = kunngjort_ukedag, y = antall))
 
+barplot(data = temp, aes(x = kunngjort_ukedag, y = antall, label = antall), flip = FALSE, ylim = c(0, 250)) +
+  labs(title = "Antall kunngjøringer pr. ukedag")
 
 #uke
 temp = group_by(df_alle, kunngjort_uke) %>%
@@ -345,6 +358,8 @@ temp = group_by(temp, cpv_divisjon) %>%
 tabell = slice_max(temp, order_by = antall, n = 20)
 knitr::kable(tabell, caption = "20 mest brukte CPV-divisjoner siste måneden")
 
+ggplot(data = temp) +
+  geom_histogram(aes(x = antall), binwidth = 2)
 
 ```
 
@@ -363,6 +378,18 @@ knitr::kable(tabell)
 
 ```
 
+## Estimert verdi på kontraktene
+
+Forventer topper rundt terskelverdi
+
+```{r}
+temp = filter(df_alle, is.na(estimert_totalverdi) == FALSE)
+
+#disse tallene er alt for store. har komma slått feil ut?
+
+```
+
+
 # FoU-utlysninger mer spesifikt
 
 
@@ -373,8 +400,9 @@ knitr::kable(tabell)
 temp = group_by(df_fou, kunngjoring_dato) %>%
   summarise(antall_kunngjøringer = n())
 
-ggplot(data = temp) +
-  geom_line(aes(x = kunngjoring_dato, y = antall_kunngjøringer))
+#blir alt for smått
+#ggplot(data = temp) +
+#  geom_line(aes(x = kunngjoring_dato, y = antall_kunngjøringer))
 
 #uke
 temp = group_by(df_fou, kunngjort_år, kunngjort_uke) %>%
@@ -386,6 +414,15 @@ ggplot(data = temp) +
   scale_x_continuous(breaks = seq(from = 0, to = 52, by = 4), minor_breaks = NULL) +
   labs(x = "Uke", y = "Antall kunngjøringer i uka", colour = "Kunngjort år", title = "Kunngjøringer av FoU-prosjekter på Doffin etter uke", 
        subtitle = "Alle FoU-kunngjøringer 2 siste år")
+
+ggplot(data = temp, aes(x = kunngjort_uke, y = antall_kunngjøringer, colour = as.factor(kunngjort_år))) +
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_x_continuous(breaks = seq(from = 0, to = 52, by = 4), minor_breaks = NULL) +
+  scale_y_continuous(limits = c(0, 15)) +
+  labs(x = "Uke", y = "Antall kunngjøringer i uka", colour = "Kunngjort år", title = "Kunngjøringer av FoU-prosjekter på Doffin etter uke", 
+       subtitle = "Alle FoU-kunngjøringer 2 siste år")
+
 
 ```
 
@@ -432,6 +469,15 @@ knitr::kable(tabell)
 
 ```
 
+## Estimert totalverdi
 
+```{r}
+summary(df_fou$estimert_totalverdi)
+
+temp = filter(df_fou, is.na(estimert_totalverdi) == FALSE)
+
+ggplot(data = temp) +
+  geom_histogram(aes(x = estimert_totalverdi), binwidth = 500000)
+```
 
 

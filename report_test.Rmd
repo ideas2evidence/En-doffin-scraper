@@ -167,9 +167,8 @@ message("Fant totalt ", nrow(filter(df, kunngjoring_type != "Kunngjøringstype: 
 
 
 #lagrer resultater som data.frame
-write.csv(df, 
-          paste0("C:/Users/Eivind Hageberg/Documents/R/prosjekter/scrape_doffin/data/funn_", as.character(Sys.Date()), ".csv"), 
-          row.names = FALSE)
+
+write_excel_csv2(df, paste0("data/funn_", as.character(Sys.Date()), ".csv"))
 
 #rydder opp, beholder kun df, fn
 rm(mer_info, resultater, resultater_2, temp_resultater, test, cpv_oppslag, fradato, i, kunder, temp_beskrivelse, temp_cpv, tildato, url)
