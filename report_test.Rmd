@@ -69,7 +69,7 @@ Denne rapporten inneholder kunngjorte konkurranser og andre kunngjøringer fra `
 CPV-er:
 
 - 73000000 - Forsknings- og utviklingsvirksomhet og tilhørende konsulenttjenester)
-- 79300000 -Markeds- og økonomisk analyse; offentlig meningsmåling og statistikk
+- 79300000 - Markeds- og økonomisk analyse; offentlig meningsmåling og statistikk
 - 79400000 - Bedriftsrådgivning og administrativ rådgivning og beslektede tjenester
 - 98342000 - Arbeidsmiljøtjenester
 
