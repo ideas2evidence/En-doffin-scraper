@@ -1,0 +1,84 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+#biblioteker
+library(tidyverse)
+library(knitr)
+library(rvest)
+library(janitor)
+library(lubridate)
+library(readxl)
+library(i2eR)
+library(i2eplot)
+
+#støttefunksjoner
+source("scripts/scraper_functions.R")  
+
+#valg
+options(scipen = 100)
+tema = theme_set(theme_i2e())
+
+#parametre
+cpv_oppslag = "73000000+79300000+79400000+98342000"
+
+#aktuelle CPV-koder
+#73000000 (Forsknings- og utviklingsvirksomhet og tilhørende konsulenttjenester)
+  #73200000  -  Konsulentvirksomhet i forbindelse med forskning og utvikling
+#79300000  -  Markeds- og økonomisk analyse; offentlig meningsmåling og statistikk
+       #79310000  -  Market research services
+            #79311200  -  Utførelse av undersøkelse
+       #79330000  -  Statistiske tjenesteytelser
+#79400000  -  Bedriftsrådgivning og administrativ rådgivning og beslektede tjenester
+#98342000  -  Arbeidsmiljøtjenester
+
+#andre aktuelle
+#75110000 - Allmenne offentlige tjenester
+
+#beregner hvor mange 30 dagers perioder jeg trenger mellom i dag og en anna dato
+#tar utgangspunkt i siste 3 år
+lengde = ceiling(as.numeric(difftime(as.Date(Sys.Date()), as.Date("30.08.2019", "%d.%m.%Y"), units = "days")) / 30)
+
+kunder = c(
+  "Arbeids-+og+inkluderingsdepartementet",
+  "NAV",
+  "%22Barne-,+ungdoms-+og+familiedirektoratet%22",
+  "Digitaliseringsdirektoratet",
+  "Direktoratet+for+forvaltning+og+økonomistyring+(DFØ)",
+  "%22Direktoratet+for+høyere+utdanning+og+kompetanse+(HK-dir)%22",
+  "HK-dir",
+  "Distriktssenteret",
+  "Integrerings-+og+mangfoldsdirektoratet+(IMDi)",
+  "Husbanken",
+  "Norad",
+  "Utdanningsdirektoratet",
+  "KS+(Kommunesektorens+organisasjon)"
+)
+
+source("scripts/parametre.R")  
+
+#støttedata
+
+#CPV-koder
+#gjør også trestrukturen litt mer eksplisitt for oppsummeringsformål
+cpv_koder = read_excel("input/cpv_2008_ver_2013.xlsx", col_types = c("text", "text", "skip")) %>%
+  separate(., CODE, into =c("cpv", NA), sep = 8) %>% #tar vekk nr. 9, som er en verifikasjonskode
+  separate(., cpv, into = c("cpv_divisjon", NA), sep = 2, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_gruppe", NA), sep = 3, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_klasse", NA), sep = 4, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_kategori", NA), sep = 5, remove = FALSE)
+
+cpv_divisjon = select(cpv_koder, cpv_divisjon, DA) %>%
+  distinct(cpv_divisjon, .keep_all = TRUE)
+
+
+
+```
+
+

@@ -1,0 +1,344 @@
+---
+title: "POC - Doffin-analyse"
+output: 
+  github_document:
+    html_preview: false
+    toc: true
+    toc_depth: 2
+---
+
+
+```{r}
+#biblioteker
+library(tidyverse)
+library(knitr)
+library(rvest)
+library(janitor)
+library(lubridate)
+library(readxl)
+library(i2eR)
+library(i2eplot)
+
+#støttefunksjoner
+source("scripts/scraper_functions.R")  
+
+#valg
+options(scipen = 100)
+tema = theme_set(theme_i2e())
+
+#parametre
+cpv_oppslag = "73000000+79300000+79400000+98342000"
+
+#aktuelle CPV-koder
+#73000000 (Forsknings- og utviklingsvirksomhet og tilhørende konsulenttjenester)
+  #73200000  -  Konsulentvirksomhet i forbindelse med forskning og utvikling
+#79300000  -  Markeds- og økonomisk analyse; offentlig meningsmåling og statistikk
+       #79310000  -  Market research services
+            #79311200  -  Utførelse av undersøkelse
+       #79330000  -  Statistiske tjenesteytelser
+#79400000  -  Bedriftsrådgivning og administrativ rådgivning og beslektede tjenester
+#98342000  -  Arbeidsmiljøtjenester
+
+#andre aktuelle
+#75110000 - Allmenne offentlige tjenester
+
+#beregner hvor mange 30 dagers perioder jeg trenger mellom i dag og en anna dato
+#tar utgangspunkt i siste 3 år
+lengde = ceiling(as.numeric(difftime(as.Date(Sys.Date()), as.Date("30.08.2019", "%d.%m.%Y"), units = "days")) / 30)
+
+kunder = c(
+  "Arbeids-+og+inkluderingsdepartementet",
+  "NAV",
+  "%22Barne-,+ungdoms-+og+familiedirektoratet%22",
+  "Digitaliseringsdirektoratet",
+  "Direktoratet+for+forvaltning+og+økonomistyring+(DFØ)",
+  "%22Direktoratet+for+høyere+utdanning+og+kompetanse+(HK-dir)%22",
+  "HK-dir",
+  "Distriktssenteret",
+  "Integrerings-+og+mangfoldsdirektoratet+(IMDi)",
+  "Husbanken",
+  "Norad",
+  "Utdanningsdirektoratet",
+  "KS+(Kommunesektorens+organisasjon)"
+)
+
+
+#støttedata
+
+#CPV-koder
+#gjør også trestrukturen litt mer eksplisitt for oppsummeringsformål
+cpv_koder = read_excel("input/cpv_2008_ver_2013.xlsx", col_types = c("text", "text", "skip")) %>%
+  separate(., CODE, into =c("cpv", NA), sep = 8) %>% #tar vekk nr. 9, som er en verifikasjonskode
+  separate(., cpv, into = c("cpv_divisjon", NA), sep = 2, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_gruppe", NA), sep = 3, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_klasse", NA), sep = 4, remove = FALSE) %>%
+  separate(., cpv, into = c("cpv_kategori", NA), sep = 5, remove = FALSE)
+
+cpv_divisjon = select(cpv_koder, cpv_divisjon, DA) %>%
+  distinct(cpv_divisjon, .keep_all = TRUE)
+
+
+```
+
+# Henter data ved hjelp av skraper-funksjonene og litt looping
+
+```{r, eval = FALSE}
+#DEL 1 - CPV-koder
+
+#Henter først ut data for CPV 73000000 
+#for de siste to år (30 dager av gangen)
+#kun kunngjøringer av konkurranser
+#inkluderer også utgåtte konkurranser
+
+resultater = data.frame()
+
+for(i in 0:lengde){
+  #lager dato
+  tildato = format((Sys.Date() - (30*i)), "%d.%m.%Y")
+  fradato = format((Sys.Date() - (30*(i+1))), "%d.%m.%Y")
+  
+  #lager URL for spørring
+  url = doffin_url_builder(
+    NoticeType = "2",
+    Cpvs = cpv_oppslag,
+    PublishedFromDate = fradato, 
+    PublishedToDate = tildato,
+    IncludeExpired = "true"
+  )
+  temp_resultater = doffin_fetch_results_long(url)
+  resultater = bind_rows(resultater, temp_resultater)
+}
+
+#DEL 2 - faste kunder
+
+resultater_2 = data.frame()
+
+for(i in 0:lengde){
+  #lager dato
+  tildato = format((Sys.Date() - (30*i)), "%d.%m.%Y")
+  fradato = format((Sys.Date() - (30*(i+1))), "%d.%m.%Y")
+
+  for(i in 1:length(kunder)){
+    url = doffin_url_builder(Query = kunder[i], 
+                             NoticeType = "",
+                             PublishedFromDate = fradato, 
+                             PublishedToDate = tildato)
+    temp_resultater = doffin_fetch_results(url)
+    if(nrow(temp_resultater) == 0){
+    }
+    if(nrow(temp_resultater) > 0){
+      resultater_2 = bind_rows(resultater_2, temp_resultater)
+    }
+  }
+}
+
+#binder sammen
+df = bind_rows(resultater, resultater_2)
+
+```
+
+```{r, eval = FALSE}
+#sjekker for duplikater på referansenr
+test = get_dupes(df, doffin_referanse)
+
+#hvis duplikater - legg inn en distinct her.
+if(nrow(test) > 0){
+  df = distinct(df, doffin_referanse, .keep_all = TRUE)
+  message("fjernet ", nrow(test), " duplikater")
+}
+
+#fjerner litt overflødig tekst
+
+resultater = mutate(df,
+              doffin_referanse = str_remove(doffin_referanse, fixed("Doffin referanse: ")),
+              publisert_av = str_remove(publisert_av, fixed("\r Publisert av:\r ")),
+              publisert_av = str_remove_all(publisert_av, fixed("\r")),
+              kunngjoring_type = str_remove(kunngjoring_type, fixed("Kunngjøringstype: ")),
+              kunngjoring_dato = str_remove(kunngjoring_dato, fixed("Kunngjøringsdato: "))
+              )
+
+#write_excel_csv2(resultater, "data/funn_stort_datasett.csv")
+```
+
+
+```{r, eval = FALSE}
+##slår opp ytterligere informasjon om de jeg har
+
+#NB! før neste kjøring, fiks NA i xpath for sum/verdi
+##denne xpathen ser ut til å feile og finne teksten "Denne anskaffelsen er delt opp i delkontrakter:"  i noen tilfeller?
+#eksempler som ikke funker
+#/Notice/Details/2022-303150 - har ikke info om beløp
+#/Notice/Details/2022-359995 - har ikke info om beløp
+#/Notice/Details/2020-359116 - har ikke info om beløp
+#bør jeg da også legge inn en sjekk av at det jeg finner, faktisk er et beløp?
+#evt bare den uparsa tekststrengen? 
+
+
+#NB! Kan ta veldig lang tid å kjøre, avhengig av antallet treff fra over!
+for(i in 1:nrow(resultater)){
+  mer_info <- read_html(paste0("https://doffin.no", resultater[i,7]))
+  
+  temp_cpv = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[5]/div/span") %>%
+    html_text2()
+  if(length(temp_cpv) > 0){
+    resultater$cpv[i] = temp_cpv
+  }
+  if(length(temp_cpv) == 0){
+    resultater$cpv[i] = NA
+  }
+  
+  temp_beskrivelse = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[9]/div") %>%
+    html_text2()
+  if(length(temp_beskrivelse) > 0){
+    resultater$beskrivelse[i] = temp_beskrivelse
+  }
+  if(length(temp_beskrivelse) == 0){
+    resultater$beskrivelse[i] = NA
+  }
+  
+  #denne xpathen ser ut til å feile og finne teksten "Denne anskaffelsen er delt opp i delkontrakter:"  i noen tilfeller?
+  temp_sum = html_element(mer_info, xpath = "//*[@id='notice']/div[3]/div[2]/div[11]") %>%
+    html_text2() %>%
+    #punktum som punktum lager problemer, må fjernes (tror disse bare kommer som inkl og ekskl)
+    str_remove(., fixed("ekskl.")) %>% 
+    str_remove(., fixed("inkl.")) %>%
+    parse_number()
+  
+  
+  if(length(temp_sum) > 0){
+    resultater$estimert_totalverdi[i] = temp_sum
+  }
+  if(length(temp_sum) == 0){
+    resultater$estimert_totalverdi[i] = NA
+  }
+  
+  Sys.sleep(2)
+}
+```
+
+```{r, eval = FALSE}
+#litt databearbeidelse
+
+resultater = mutate(resultater,
+            kunngjoring_dato = as.Date(kunngjoring_dato),
+            tilbudsfrist_dato = as.Date(tilbudsfrist_dato),
+            kunngjort_uke = week(kunngjoring_dato),
+            kunngjort_år = year(kunngjoring_dato),
+            fristlengde = as.numeric(difftime(tilbudsfrist_dato, kunngjoring_dato, units = "days")),
+            #får en del usannsynlige frister som sannsynligvis er feil her
+            fristlengde = ifelse(fristlengde > 200, NA, fristlengde)
+              )
+
+```
+
+```{r, eval = FALSE}
+#lagrer datasettet
+#write_excel_csv2(df, "data/funn_stort_datasett.csv")
+
+```
+
+
+
+
+# Grunnleggende om datasettene
+
+Her har vi: 
+
+- 1 165 kunngjorte konkurranser med alle CPV-koder, fra 19. februar 2022 til 19. mars 2022.
+- 852 kunngjorte konkurranser med CPV-koden 73000000 - Forskning og utvikling, fra 17. mars 2020 til 17. mars 2022. 
+
+```{r}
+glimpse(resultater)
+```
+
+# FoU-utlysninger mer spesifikt
+
+
+## Når lyses prosjektene ut?
+
+```{r}
+#dato
+temp = group_by(df_fou, kunngjoring_dato) %>%
+  summarise(antall_kunngjøringer = n())
+
+#blir alt for smått
+#ggplot(data = temp) +
+#  geom_line(aes(x = kunngjoring_dato, y = antall_kunngjøringer))
+
+#uke
+temp = group_by(df_fou, kunngjort_år, kunngjort_uke) %>%
+  summarise(antall_kunngjøringer = n())
+
+ggplot(data = temp) +
+  geom_point(aes(x = kunngjort_uke, y = antall_kunngjøringer, colour = as.factor(kunngjort_år))) +
+  geom_smooth(aes(x = kunngjort_uke, y = antall_kunngjøringer)) +
+  scale_x_continuous(breaks = seq(from = 0, to = 52, by = 4), minor_breaks = NULL) +
+  labs(x = "Uke", y = "Antall kunngjøringer i uka", colour = "Kunngjort år", title = "Kunngjøringer av FoU-prosjekter på Doffin etter uke", 
+       subtitle = "Alle FoU-kunngjøringer 2 siste år")
+
+ggplot(data = temp, aes(x = kunngjort_uke, y = antall_kunngjøringer, colour = as.factor(kunngjort_år))) +
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  scale_x_continuous(breaks = seq(from = 0, to = 52, by = 4), minor_breaks = NULL) +
+  scale_y_continuous(limits = c(0, 15)) +
+  labs(x = "Uke", y = "Antall kunngjøringer i uka", colour = "Kunngjort år", title = "Kunngjøringer av FoU-prosjekter på Doffin etter uke", 
+       subtitle = "Alle FoU-kunngjøringer 2 siste år")
+
+
+```
+
+
+## Lengde på frister
+
+```{r}
+summary(df_fou$fristlengde)
+
+ggplot(data = df_fou, aes(x = fristlengde)) +
+  geom_histogram(binwidth = 1) +
+  labs(title = "Tid fra kunngjøring til frist for leveranse", subtitle = "Alle cpv 73000000-utlysninger på doffin fra 17. mars 2020 til 17. mars 2022",
+       x = "Antall dager", y = "Antall utlysninger"
+       )
+```
+
+## Antall oppdrag etter oppdragsgiver (de største )
+
+```{r}
+temp = group_by(df_fou, publisert_av) %>%
+  summarise(
+    antall_oppdrag = n()
+  )
+
+summary(temp$antall_oppdrag)
+
+ggplot(data = temp, aes(x = antall_oppdrag)) +
+  geom_histogram(binwidth = 1)
+  
+tabell = slice_max(temp, antall_oppdrag, n = 20)
+knitr::kable(tabell)
+
+#og etter år
+temp = group_by(df_fou, kunngjort_år, publisert_av) %>%
+  summarise(
+    antall_oppdrag = n()
+  ) %>%
+  pivot_wider(names_from = kunngjort_år, values_from = antall_oppdrag)
+
+tabell = slice_max(temp, `2022`, n = 10)
+knitr::kable(tabell)
+
+
+
+```
+
+## Estimert totalverdi
+
+```{r}
+summary(df_fou$estimert_totalverdi)
+
+temp = filter(df_fou, is.na(estimert_totalverdi) == FALSE)
+
+ggplot(data = temp) +
+  geom_histogram(aes(x = estimert_totalverdi), binwidth = 500000)
+```
+
+
