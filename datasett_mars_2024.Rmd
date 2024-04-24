@@ -1,0 +1,209 @@
+---
+title: "Analyse av utlysninger 1.1.2023-14.3.2023"
+output: 
+  github_document:
+    html_preview: false
+    toc: true
+    toc_depth: 2
+---
+
+```{r}
+#biblioteker
+suppressPackageStartupMessages(library(tidyverse))
+library(httr2)
+library(jsonlite)
+suppressPackageStartupMessages(library(janitor)) #for den hendige get_dupes()-funksjonen
+library(robotstxt) #for å spørre om jeg får lov til å skrape
+library(writexl)
+
+#settings
+options(scipen = 999)
+```
+
+
+Sette sammen et datasett
+
+For tidsperioden 1.1.2023-14.3.2023
+- alle utlysninger av konkurranser på utvalgte CPV-koder 
+- alle utlysninger fra utvalgte kunder 
+- utlyninbger fra utvalgte kunder på utvalgte CPV-koder
+
+# Alle utlysninger på utvalgt CPV
+
+```{r}
+req_kompleks = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    searchString = unbox(""),
+    numHitsPerPage = unbox(500),
+    sortBy = unbox("RELEVANCE"),
+    page = unbox(1),
+    facets = list(
+      type = list(
+        checkedItems = ("COMPETITION")
+      ),
+      issueDate = list(
+        from = unbox("2023-01-01"),
+        to = unbox("2024-03-14")
+      ),
+      cpvCode = list(
+        checkedItems = ("73000000")
+      )
+    )
+  ),
+  auto_unbox = FALSE
+  )
+
+#testkjører
+req_kompleks %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_kompleks)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+#data
+df_fou = tidyr::unnest(json$hits, cols = c(buyer, locationId, estimatedValue), names_sep = c("_"),
+                     keep_empty = TRUE)
+glimpse(df_fou)
+
+#sjekker for duplikater
+test = get_dupes(df_fou, id)
+```
+
+# Alle utlysninger av utvalgte kunder
+
+Utvalgte kunder:
+•	AID: Arbeids- og inkluderingsdepartementet
+•	IMDi: Integrerings- og mangfoldsdirektoratet
+•	Bufdir: Barne-, ungdoms- og familiedirektoratet
+•	KDD: Kommunal- og distriktsdepartementet
+•	KS: Kommunesektorens organisasjon
+•	UiB: Universitetet i Bergen
+•	HK-dir: Direktoratet for høyere utdanning og kompetanse
+•	UDI: Utlendingsdirektoratet
+•	Kulturråd: Norsk kulturråd
+•	KUD: Kultur- og likestillingsdepartementet
+•	JD: Justis- og beredskapsdepartementet
+•	UDIR: Utdanningsdirektoratet
+•	KD: Kulturdepartementet
+
+Ved hjelp av søkeforslagene til doffin.no fanger jeg opp ulike varianter og skrivemåter for disse kundene:
+
+```{r}
+kunder = c("Integrerings- og mangfoldsdirektoratet (IMDi)", "Integrerings- og mangfoldsdirektoratet", "Integrerings- og Mangfoldsdirektoratet", "Arbeids- og inkluderingsdepartementet", "Bufdir : Barne-, Ungdoms- og Familiedirektoratet", "Bufdir: Barne-, Ungdoms- og Familiedirektoratet", "Bufdir", "Barne-, ungdoms- og familiedirektoratet", "Barne-, ungdoms- og  familiedirektoratet", "Kommunal- og distriktsdepartementet", "KS  (Kommunesektorens organisasjon)", "KS  Kommunesektorens organisasjon", "UNIVERSITETET I BERGEN", "Universitetet i Bergen", "Universitetet I Bergen", "Direktoratet for høyere utdanning og kompetanse (HK-dir)", "DIREKTORATET FOR HØYERE UTDANNING OG KOMPETANSE", "Direktoratet for høyere utdanning og kompetanse", "Utlendingsdirektoratet - UDI", "Utlendingsdirektoratet", "Utlendingsdirektoratet (UDI)", "Norsk Kulturråd", "Kulturrådet", "Norsk kulturråd", "Kultur- og likestillingsdepartementet", "Justis- og beredskapsdepartementet", " JUSTIS- OG BEREDSKAPSDEPARTEMENTET", "Utdanningsdirektoratet", "Kulturdepartementet")
+```
+
+```{r}
+req_kompleks = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    #searchString = unbox(""),
+    numHitsPerPage = unbox(400),
+    sortBy = unbox("RELEVANCE"),
+    page = unbox(1),
+    facets = list(
+      type = list(
+        checkedItems = ("COMPETITION")
+      ),
+      buyer = list(
+        checkedItems = kunder
+      ),
+      issueDate = list(
+        from = unbox("2023-01-01"),
+        to = unbox("2024-03-14")
+      )
+    )
+  ),
+  auto_unbox = FALSE
+  )
+
+#testkjører
+req_kompleks %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_kompleks)
+
+#ser på responsen
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+#df
+#df_kunder = tidyr::unnest(json$hits, cols = c(buyer, locationId, estimatedValue), names_sep = c("_"),
+#                     keep_empty = TRUE)
+```
+
+
+Eksporterer data
+
+
+```{r}
+write_xlsx(list(fou = df_fou, kunder = df_kunder), "data/kunngjorte_konkurranser_010123-140324.xlsx")
+```
+
+
+# Alle CPV-utlysninger for spesifikke kunder
+
+```{r}
+kunder = c("Integrerings- og mangfoldsdirektoratet (IMDi)", "Integrerings- og mangfoldsdirektoratet", "Integrerings- og Mangfoldsdirektoratet", "Arbeids- og inkluderingsdepartementet", "Bufdir : Barne-, Ungdoms- og Familiedirektoratet", "Bufdir: Barne-, Ungdoms- og Familiedirektoratet", "Bufdir", "Barne-, ungdoms- og familiedirektoratet", "Barne-, ungdoms- og  familiedirektoratet", "Kommunal- og distriktsdepartementet", "KS  (Kommunesektorens organisasjon)", "KS  Kommunesektorens organisasjon", "UNIVERSITETET I BERGEN", "Universitetet i Bergen", "Universitetet I Bergen", "Direktoratet for høyere utdanning og kompetanse (HK-dir)", "DIREKTORATET FOR HØYERE UTDANNING OG KOMPETANSE", "Direktoratet for høyere utdanning og kompetanse", "Utlendingsdirektoratet - UDI", "Utlendingsdirektoratet", "Utlendingsdirektoratet (UDI)", "Norsk Kulturråd", "Kulturrådet", "Norsk kulturråd", "Kultur- og likestillingsdepartementet", "Justis- og beredskapsdepartementet", " JUSTIS- OG BEREDSKAPSDEPARTEMENTET", "Utdanningsdirektoratet", "Kulturdepartementet")
+```
+
+```{r}
+req_kompleks = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    #searchString = unbox(""),
+    numHitsPerPage = unbox(400),
+    sortBy = unbox("RELEVANCE"),
+    page = unbox(1),
+    facets = list(
+      type = list(
+        checkedItems = ("COMPETITION")
+      ),
+      buyer = list(
+        checkedItems = kunder
+      ),
+      issueDate = list(
+        from = unbox("2023-01-01"),
+        to = unbox("2024-03-14")
+      ),
+      cpvCode = list(
+        checkedItems = ("73000000")
+      )
+    )
+  ),
+  auto_unbox = FALSE
+  )
+
+#testkjører
+req_kompleks %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_kompleks)
+
+#ser på responsen
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+#df
+df = tidyr::unnest(json$hits, cols = c(buyer, locationId, estimatedValue), names_sep = c("_"),
+                     keep_empty = TRUE)
+
+#eksport
+write_xlsx(list(fou_kunder = df), "data/kunngjorte_konkurranser_fou_utvalg_kunder_010123-140324.xlsx")
+```

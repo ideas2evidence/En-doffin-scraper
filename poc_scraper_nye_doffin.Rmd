@@ -1,0 +1,548 @@
+---
+title: "En kort proof-of-concept for en scraper for nye Doffin"
+output: 
+  github_document:
+    html_preview: false
+    toc: true
+    toc_depth: 2
+---
+
+Målet er å lage en webscraper som kan hente data fra Doffin om relevante utlysninger. 
+
+### Gjenstående ting å se på
+
+# Bakgrunn
+
+[Doffin](https://www.doffin.no/) er den nasjonale kunngjøringsdatabasen for offentlige anskaffelser på doffin.no . Høsten 2023 kom den i ny drakt, med nytt utseende - og viktigere for scrape-formål, ny struktur og et nytt API.
+
+Use-casene er fortsatt de samme: 
+
+- Det kan også potensielt være verdi å kunne se statistikk over omfanget av utlysninger etter ulike parametre (som. f.eks. om det er spesielle måneder hvor det lyses ut spesielt mye FoU-prosjekter, om det er aktører som i større eller mindre grad bruker Doffin (og dermed heller bruker andre anskaffelseskanaler).
+- For å holde seg oppdatert på aktuelle kunngjøringer, kan det være en fordel å med jevne mellomrom få varslinger om nye kunngjøringer. 
+- Det kan også være nyttig å kunne sette opp abonnementer på relativt komplekse søk (f.eks. etter flere oppdragsgivere en kjenner godt, mange mindre oppdragsgivere som publiserer sjeldnere og dermed lettere går under radaren). 
+
+Selve Doffin-nettsida tilbyr i dag lite som passer slikt. Doffin er kun en database og et web-grensesnitt for å søke i databasen. De overlater til tredjepartsleverandører, som Mercell, å tilby tjenester som dekker dette.
+
+# Hvordan løse dette
+
+I forrige utgave kunne en konstruere søk på nettsida med å sette sammen søke-parameter i en URL, og så finne de ønska delene fra HTML-sidene med xpath og css-selektorer. Denne gangen ser det derimot ut til å være et API i bakkant, som en kan POSTe spørringer til. Dermed trenger vi disse bibliotekene:
+
+```{r}
+#biblioteker
+suppressPackageStartupMessages(library(tidyverse))
+library(httr2)
+library(jsonlite)
+suppressPackageStartupMessages(library(janitor)) #for den hendige get_dupes()-funksjonen
+library(robotstxt) #for å spørre om jeg får lov til å skrape
+
+#settings
+options(scipen = 999)
+```
+
+Her har det også skjedd en nyvinning i form av [httr2-pakken](https://httr2.r-lib.org/), som erstatter httr-pakken.
+
+# Hvordan ser dette API-et ut?
+
+## Endepunkter
+
+Etter hva jeg kan se, er det 
+- ett endepunkt for POST av søk. (https://dof-search-notices-prod-app.azurewebsites.net/search)
+- endepunkt for hver enkelt kunngjøring, GET (https://dof-notices-prod-app.azurewebsites.net/api/dof/notices/)
+- endepunkt for cpv-koder, GET (https://dof-notices-prod-app.azurewebsites.net/api/dof/codes/cpvCodes)
+- endepunkter som gir forslag dynamisk (suggest), mindre nyttig for meg?
+https://dof-search-notices-prod-app.azurewebsites.net/search/suggest
+
+
+## Obsobs - er det lov?
+
+Før en stuper inn i det, er det et par ting som må avklares:
+
+- Tillater brukerbetingelsene for Doffin at vi bruker innholdet? 
+
+Det ser ikke ut til å være noen brukerbetingelser for bruk av nettsida eller API. 
+
+- Tillater nettsida at vi bruker en robot for å skrape ut innholdet? 
+
+En av flere guider er [her](https://stevenmortimer.com/scraping-responsibly-with-r/), som anbefaler [robotstxt-pakka](https://cran.r-project.org/web/packages/robotstxt/vignettes/using_robotstxt.html). Her kan en teste enkelt-stier i robots.txt-fila på nettsida, og se om det er tillatt for roboter å aksessere den. Jeg sjekker for et generelt søkeresultat og en enkelt kunngjøring:
+
+```{r}
+#kan jeg bare hente robotstxt og se hva som står der?
+
+rt = get_robotstxt("https://www.doffin.no")
+rt 
+
+#er det noen spesifikke paths som ikke er allowed her? 
+#for en søkeside
+paths_allowed(
+  paths = "https://dof-search-notices-prod-app.azurewebsites.net/search",
+  domain = "doffin.no",
+  bot = "*"
+)
+
+#for en spesifikk kunngjøring
+paths_allowed(
+  paths = "https://www.doffin.no/notices/2024-103605",
+  domain = "doffin.no",
+  bot = "*"
+)
+
+#APIet for en spesfikk kunngjøring
+paths_allowed(
+  paths = "https://dof-notices-prod-app.azurewebsites.net/api/dof/notices/2023-675241",
+  domain = "doffin.no",
+  bot = "*"
+)
+
+#APIet for suggest
+paths_allowed(
+  paths = "https://dof-search-notices-prod-app.azurewebsites.net/search/suggest",
+  domain = "doffin.no",
+  bot = "*"
+)
+
+
+```
+
+Test-spørringene returnerer SANN, og det bør derfor være tillatt. 
+
+
+## Endepunkt for Søk
+
+Et enkelt søk på "integrering", gjøres med en POST til "https://dof-search-notices-prod-app.azurewebsites.net/search". POST tar følgende argumenter, i JSON-format:
+
+{
+  "numHitsPerPage":20,
+  "page":1,
+  "searchString":"integrering",
+  "sortBy":"RELEVANCE",
+  "facets":
+    {"cpvCode":
+        {"checkedItems":[]},
+      "type":
+        {"checkedItems":["COMPETITION"]},
+      "status":
+        {"checkedItems":["ACTIVE"]},
+      "contractNature":
+        {"checkedItems":[]},
+      "issueDate":
+        {"from":null,"to":null},
+      "location":
+        {"checkedItems":[]},
+      "buyer":
+        {"checkedItems":[]},
+      "winner":
+        {"checkedItems":[]}}
+  }
+
+Det er verdt å merke seg JSON-strukturen her: de fire første elementene er "singletons", dvs. sett med 1 element. De andre er derimot arrays.
+
+Her har vi følgende argumenter
+
+- numHitsPerPage (på nettsida er dette angitt som 20, 50, 100 eller 200, men jeg ser at jeg også kan spesifisere denne til 2000 og få 343 treff tilbake.
+- page. sidetallet som returneres, numerisk.
+- searchString : søkestreng
+- sortBy: hvordan resultatet skal sorteres, tar argumentene RELEVANCE, ISSUE_DAT_DESC, ISSUE_DAT_ASC, DEADLINE.
+
+Under facets finner vi følgende
+- cpvCode: [8-sifra CPV-koder]
+- type: 
+-- COMPETITION [kan erstattes av ANNOUNCEMENT_OF_COMPETITION, DYNAMIC_PURCHASING_SCHEME], 
+-- PLANNING [kan erstattes av ADVISORY_NOTICE eller], 
+-- RESULT [kan erstattes av ANNOUNCEMENT_OF_INTENT, ANNOUNCEMENT_OF_CONCLUSION_OF_CONTRACT, CANCELLED_OR_MISSING_CONCLUSION_OF_CONTRACT]
+- status (ACTIVE, EXPIRED) (Men merk - ikke alle har en status, ser det ut til)
+-- contractNature (SERVICES, SUPPLIES, WORKS)
+-- issueDate(from: YYYY-MM-DD, to: YYYY-MM-DD, en dato kan erstattes av null)
+-- location (lokasjonskoder her)
+-- buyer (her er oppdragsgivers navn inn - hvordan er disse kodet, mon tro? Suggest returnerer ulike skrivemåter for IMDI, med ulikt antall treff?)
+-- winner 
+
+Prøver først helt basic med httr2. 
+
+```{r}
+
+#enkel variant
+req_enkel = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    searchString = "integrering",
+    numHitsPerPage = 20,
+    sortBy = "RELEVANCE",
+    page = 1
+  ))
+
+#testkjører
+req_enkel %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_enkel)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+```
+
+Etter litt eksperimentering ser jeg at helt enkle forespørsler etter en streng, med angivelse av antall treff, side og sortering går greit. Alle variabler under facets får jeg imidlertid ikke angitt korrekt via httr2::req_body_json, ettersom JSON-spørringen er enkelt formatert på overordna nivå, dvs. ingen braketter, men standard-formatert under facets med braketter også rundt arrays med kun ett element.
+
+Dette kunne i teorien vært løst med en wrapper for formatering av spørring. Men det er ikke helt utrivielt, ettersom en må paste sammen mange forskjellige elementer, med korrekt parentes-angivelse, håndtere manglende elementer, håndtere JSONs null-verdi...
+
+```{r}
+
+#base-variant fra nettsida
+query = '{
+  "numHitsPerPage":20,
+  "page":1,
+  "searchString":"integrering",
+  "sortBy":"RELEVANCE",
+  "facets":
+    {"cpvCode":
+        {"checkedItems":[]},
+      "type":
+        {"checkedItems":["COMPETITION"]},
+      "status":
+        {"checkedItems":["ACTIVE"]},
+      "contractNature":
+        {"checkedItems":[]},
+      "issueDate":
+        {"from":null,"to":null},
+      "location":
+        {"checkedItems":[]},
+      "buyer":
+        {"checkedItems":[]},
+      "winner":
+        {"checkedItems":[]}}
+  }'
+
+req_base = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_raw(body = query, type = "application/json")
+
+#testkjører
+req_base %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_base)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+```
+
+Etter en kikk i dokumentasjonen for httr2::req_body_json, ser jeg at det er jsonlite::toJSON som gjør arbeidet med å omforme listene til JSON. Dokumentasjonen av auto_unbox foreslår at en enten wrapper det som ikke skal unboxes i I(), eller det som skal unboxes i unbox().
+
+```{r}
+req_kompleks = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    searchString = unbox("integrering"),
+    numHitsPerPage = unbox(20),
+    sortBy = unbox("RELEVANCE"),
+    page = unbox(1),
+    facets = list(
+      type = list(
+        checkedItems = ("COMPETITION")
+      ),
+      cpvCode = list(
+        checkedItems = ("73100000")
+      )
+    )
+  ),
+  auto_unbox = FALSE
+  )
+
+#testkjører
+req_kompleks %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_kompleks)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+```
+
+Perfekt! Dette ser ut til å fungere som forventa. Det er litt tungvindt å måtte huske og skrive ut strukturen for hver gang, hvis det blir mye spørringer. Det at issueDate har null-verdier, mens de øvrige er tomme lister, gjør meg litt skeptisk til å hive meg på å lage en generalisering rundt det. 
+
+Kan jeg spørre om flere ulike buyers?
+
+```{r}
+req_kompleks = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    #searchString = unbox(""),
+    numHitsPerPage = unbox(20),
+    sortBy = unbox("RELEVANCE"),
+    page = unbox(1),
+    facets = list(
+      type = list(
+        checkedItems = ("COMPETITION")
+      ),
+      buyer = list(
+        checkedItems = (c("Integrerings- og mangfoldsdirektoratet (IMDi)", "Integrerings- og mangfoldsdirektoratet", "Integrerings- og Mangfoldsdirektoratet"))
+      )
+    )
+  ),
+  auto_unbox = FALSE
+  )
+
+#testkjører
+req_kompleks %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_kompleks)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+#df
+#test = tidyr::unnest(json$hits, cols = c(locationId, estimatedValue), names_sep = c("_"),
+#                     keep_empty = TRUE)
+```
+
+Jeg kan også hente informasjon om avgjorte konkurranser. Men jeg får ikke informasjon om vinner i første resultat, da må jeg inn i hvert enkelt utfall.
+
+```{r}
+req_kompleks = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    #searchString = unbox(""),
+    numHitsPerPage = unbox(20),
+    sortBy = unbox("RELEVANCE"),
+    page = unbox(1),
+    facets = list(
+      type = list(
+        checkedItems = ("RESULT")
+      )
+    )
+  ),
+  auto_unbox = FALSE
+  )
+
+#testkjører
+req_kompleks %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_kompleks)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+#df
+#test = tidyr::unnest(json$hits, cols = c(locationId, estimatedValue), names_sep = c("_"),
+#                     keep_empty = TRUE)
+```
+
+Så her er måten å hente alle utlysninger av konkurranser om FoU-prosjekter siden 1. januar 2023 på:
+
+```{r}
+
+  # "facets":
+  #   {"cpvCode":
+  #       {"checkedItems":[]},
+  #     "type":
+  #       {"checkedItems":["COMPETITION"]},
+  #     "status":
+  #       {"checkedItems":["ACTIVE"]},
+  #     "contractNature":
+  #       {"checkedItems":[]},
+  #     "issueDate":
+  #       {"from":null,"to":null},
+  #     "location":
+  #       {"checkedItems":[]},
+  #     "buyer":
+  #       {"checkedItems":[]},
+  #     "winner":
+  #       {"checkedItems":[]}}
+  # }'
+
+req_kompleks = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search") |>
+  req_body_json(data = list(
+    searchString = unbox(""),
+    numHitsPerPage = unbox(500),
+    sortBy = unbox("RELEVANCE"),
+    page = unbox(1),
+    facets = list(
+      type = list(
+        checkedItems = ("COMPETITION")
+      ),
+      issueDate = list(
+        from = unbox("2023-01-01"),
+        to = unbox("2024-03-01")
+      ),
+      cpvCode = list(
+        checkedItems = ("73000000")
+      )
+    )
+  ),
+  auto_unbox = FALSE
+  )
+
+#testkjører
+req_kompleks %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_kompleks)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+```
+
+
+### Outputen
+
+Her får jeg dataene strukturert og fint. 
+
+- numHitsTotal er antakelig totale treff
+- numHitsAccessible er antakelig treff som kan hentes
+
+```{r}
+json$numHitsTotal
+json$numHitsAccessible
+```
+
+
+- hits er den spesifikke lista med treff. 10 treff ser ut til å være en standard, jeg økte det over til 500
+
+```{r}
+#unnester det til en data-frame-struktur.
+test = tidyr::unnest(json$hits, cols = c(buyer, locationId, estimatedValue), names_sep = c("_"),
+                     keep_empty = TRUE)
+glimpse(test)
+
+```
+
+CPV-kode mangler her.
+
+Her har vi mye bra informasjon om utlysningene:
+- id er ID-en til utlysninga
+- buyer_id ser ut som organisasjonsnummeret til kunngjører.
+- buyer_name er navnet på kunngjører
+- heading er navnet på kunngjøring
+- description er en kort beskrivelse av det som anskaffes
+- locationID er sted
+- currencycode er valutakode
+- amount er verdien estimert
+- type - ser ut som om det er en oppramsing av kunngjøringsform,
+```{r}
+distinct(test, type)
+```
+
+- allTypes - litt usikker på hva denne gjør? Hvis jeg unnester den, blir det mye. Er det alle typer kunngjøringer som er gjort på en spesifikk kode?
+
+```{r}
+distinct(unnest(test, cols = allTypes), allTypes)
+```
+
+- status ser ut til å være om kunngjøringen er aktiv eller utgått. Kunngjøringer om resultat utgår ikke
+- issuedDate - kunngjøringsdato
+- deadline - frist for tilbud
+- receivedTenders - antall innleverte tilbud, spesifikk for kunngjøring av resultat
+- limitedDataFlag, usikker på denne
+- doffinClassicUrl - antakelig det det står.
+
+JSON-objektet har også en "facets". Det kan være ulike egenskaper ved treffene, ettersom det er en liste her med en rekke under-beskrivelser, av status, type, locations, cpvCode, contractNature. Noen eksempler:
+
+```{r}
+unnest(json$facets$status$items)
+unnest(json$facets$type$items)
+unnest(json$facets$locations$items)
+#unnest(json$facets$cpvCode$items) - lager veldig mye styr.
+unnest(json$facets$contractNature$items)
+```
+
+Sorteringa følger automatisk samme som nettsida, dvs. sortBy "Relevance" er automatisk med. Alle typer kunngjøringer er automatisk med.
+
+## Suggest-APIet
+
+En hovedutfordring er at de som kunngjører, bruker ulike navn. Søker jeg på "IMDi" på doffin.no, uten andre filtre, får jeg 148 treff. Søker jeg på "Integrerings- og mangfoldsdirektoratet (IMDi)" som "buyer", får jeg 214 treff. Men det er andre buyer-søk som gir andre antall treff. Her er det antakelig søk jeg kan sette opp.
+
+Payloaden her er som så:
+
+{"facets":
+  {"cpvCode":
+    {"checkedItems":[]},
+  "type":
+    {"checkedItems":[]},
+  "status":
+    {"checkedItems":[]},
+  "contractNature":
+    {"checkedItems":[]},
+  "issueDate":
+    {"from":null,"to":null},
+  "location":
+    {"checkedItems":[]},
+  "buyer":
+    {"checkedItems":[]},
+  "winner":{"checkedItems":[]}
+  },
+  "searchString":"integrering"}
+
+```{r}
+req_enkel = request(base_url = "https://dof-search-notices-prod-app.azurewebsites.net/search/suggest") |>
+  req_body_json(data = list(
+    searchString = "integrering"
+  ))
+
+#testkjører
+req_enkel %>% req_dry_run()
+
+#utfører spørringa
+response = req_perform(req_enkel)
+
+#ser på responsen
+
+#status
+resp_status(response)
+#innhold
+resp_content_type(response)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(response, flatten = FALSE, simplifyVector = TRUE)
+
+#henter data
+temp = as.data.frame(json$buyer)
+```
+
+
+## Enkeltkunngjøring
+
+## Annen informasjon
+
+CPV-koder m.m.
+
