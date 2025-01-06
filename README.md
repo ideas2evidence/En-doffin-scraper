@@ -6,7 +6,7 @@ Benytter seg av [Doffins produksjons-API] (https://dof-notices-prod-api.develope
 
 Koden gjennomgås i en kort [proof-of-concept](poc_api_nye_doffin.Rmd), som viser hvordan innhold fra nye doffin.no hentes ut.
 
-I tillegg kan det være verdt å nevne at Doffin nå har fått sin egen [datavisualiserings-portal](https://www.doffin.no/data). De har også lagt ut komplette datasett over utlysninger for tidligere år.
+I tillegg kan det være verdt å nevne at Doffin nå har fått sin egen [datavisualiserings-portal](https://www.doffin.no/data). De har også lagt ut komplette datasett over utlysninger for tidligere år. Noen gamle versjoner av [disse ligger her](https://github.com/ideas2evidence/En-doffin-scraper/tree/main/dfo_data)
 
 ## Utviklingsmuligheter
 - Mer feilhåndtering.
