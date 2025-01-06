@@ -1,0 +1,315 @@
+---
+title: "POC Doffin API"
+output:
+  html_document:
+    df_print: paged
+---
+
+Doffin har to API - et for testing og utvikling og et for produksjon (Se https://github.com/anskaffelser/eforms-sdk-nor for mer informasjon). 
+
+Siden målet vårt her i første rekke er å lage små funksjoner og tjenester for å søke i kunngjorte utlysninger, benytter vi først og fremst [test-API-et] (https://dof-notices-dev-api.developer.azure-api.net/apis). API styres av Azure API Management, og selv om det er gratis, må du registrere deg og få en adgangsnøkkel. Det er rate limiting her, uten at jeg har funnet det dokumentert hva grensa er. Kanskje jeg aksepterte noen bruksbetingelser litt vel fort?
+
+API-et inneholder to endepunkt - Notices og Public, der det første er for publisering av konkurranser, og det andre for å søke og laste ned konkurranser. Vi bruker sistnevnte. 
+
+Her har vi igjen tre endepunkt: download, search og search with dates. 
+
+For å gjøre spørringer benytter vi tidyverse og httr2.
+
+```{r}
+#pakker
+library(tidyverse)
+library(httr2)
+library(writexl)
+
+#settings
+options(scipen = 999)
+prod_url = "https://api.doffin.no/public/v2/search"
+prod_key = config::get(config = "doffin_api_keys", file = "../config/config.yml")$prod_key
+
+dev_url = "https://betaapi.doffin.no/public/v2/search"
+dev_key = config::get(config = "doffin_api_keys", file = "../config/config.yml")$dev_key
+```
+
+# Search
+
+Request skal formateres som GET "https://api.doffin.no/public/v2/search[?numHitsPerPage][&page][&sortBy][&searchString][&type][&status][&cpvCode][&location][&issueDateFrom][&issueDateTo][&estimatedValueFrom][&estimatedValueTo]"
+
+Ingen av parametrene er required. Dvs. at vi kan gjøre en superenkel spørring som vi gi oss default-verdier, slik: 
+
+```{r}
+#enkel greie
+req = request(dev_url) |> 
+  req_headers(
+    `Ocp-Apim-Subscription-Key` = dev_key,
+  )
+
+req
+
+resp = req_perform(req)
+
+resp_content_type(resp)
+
+json = resp_body_json(resp, flatten = FALSE, simplifyVector = TRUE)
+```
+
+Her får jeg ut ei liste med tre elementer: en verdi for antall treff totalt, en verdi for antall treff jeg får tilgang til, og en data.frame med utvalgte treff. Her får jeg totalt 17 variabler, inkludert ID, kjøper, tittel og kortbeskrivelse, estimert verdi, type utlysning (konkurranse, resultat eller intensjon), hva som er status for konkurransen, frister og cpv-koder:
+
+```{r}
+glimpse(json$hits)
+```
+
+Standardangivelsen er at jeg får 15 treff pr. side. I skrivende stund ser det ut til å være de 15 sist publiserte kunngjøringene. Test-APIet kobler mot en database som rimelig nok inneholder litt testdata, og litt faktiske data. 
+
+En kan oppgi totalt 12 ulike paramatre i spørringa, inkludert fritekst, type utlysning, status for utlysninga, cpv, sted, datoer og verdier. Syntaks-eksemplene på nettsida er ikke for R, men er ikke alt for komplekse. httr2::curl_translate() gir eksempler for oversettelse til R-syntaks: 
+
+```{r}
+
+cmd = "curl -X 'GET' \ 'https://api.doffin.no/public/v2/search?numHitsPerPage=2&page=2&estimatedValueFrom=1000000&estimatedValueTo=1000000000&status=EXPIRED' \ -H 'Ocp-Apim-Subscription-Key: <your-subscription-key>'"
+
+curl_translate(cmd)
+```
+
+Vi kan så benytte denne:
+
+```{r}
+resp = request(dev_url) |> 
+  req_method("GET") |> 
+  req_url_query(
+    numHitsPerPage = "2",
+    page = "2",
+    estimatedValueFrom = "1000000",
+    estimatedValueTo = "1000000000",
+    status = "EXPIRED",
+  ) |> 
+  req_headers(
+    `Ocp-Apim-Subscription-Key` = dev_key,
+  ) |> 
+  req_perform()
+
+resp_content_type(resp)
+
+json = resp_body_json(resp, flatten = FALSE, simplifyVector = TRUE)
+```
+
+Her får jeg ut ei liste med tre elementer: en verdi for antall treff totalt, en verdi for antall treff jeg får tilgang til, og en data.frame med utvalgte treff. Siden spørringen avgrenser det til to treff pr. side, og side to, er det veldig oversiktelig:
+
+```{r}
+knitr::kable(json$hits)
+```
+
+Å ikke spesifisere parametre status og type ser ut til å gi alle ulike statuser og typer som default. 
+
+# Usecase: holde oversikt over aktuelle konkurranser
+
+For å holde oversikt over aktuelle konkurranser, kan en bruke dette endepunktet mer løpende, eller en kan bruke det til å få oversikt over en lengre tidsperiode. Fordelen med API-tilgang over søkefunksjonen i nettleseren, er at en kan sammenstille data som ellers ville måtte være fanget opp med flere separate søk.
+
+For å demonstrere bruk, skrur jeg sammen noen datasett under for tidsperioden 30.11.2024 - 3.1.2025:
+
+- alle utlysninger av konkurranser på utvalgte CPV-koder 
+- alle utlysninger fra utvalgte kunder 
+- utlyninbger fra utvalgte kunder på utvalgte CPV-koder
+
+# Alle utlysninger på utvalgt CPV
+
+```{r}
+#sjekker først med dev at jeg kan spørre på CPV og datoer, 
+#så at jeg får til multi (ut fra eksemplene ('status=ACTIVE&status=EXPIRED') er det explode)
+#så at jeg kan sette numHitsPerPage til maks antall hits, unngår continuation (men revurder det om disse spørringene kjøres hyppig eller tallet blir veldig høyt)
+#så prod
+
+resp = request(prod_url) |> 
+  req_method("GET") |> 
+  req_url_query(
+    numHitsPerPage = "200",
+    page = "1",
+    sortBy = "PUBLICATION_DATE_DESC",
+    #status = c("ACTIVE", "EXPIRED", "AWARDED", "CANCELLED"),
+    #type = c("COMPETITION", "RESULT", "PLANNING"),
+    cpvCode = "73000000",
+    issueDateFrom = "2024-11-30",
+    issueDateTo = "2025-01-03",
+    .multi = "explode"
+  ) |> 
+  req_headers(
+    `Ocp-Apim-Subscription-Key` = prod_key,
+  ) |> 
+  req_perform()
+
+#status
+resp_status(resp)
+resp_content_type(resp)
+
+#henter ut json-objektet som ble returnert
+json = resp_body_json(resp, flatten = FALSE, simplifyVector = TRUE)
+
+#data
+#unnester buyer senere #tidyr::unnest(json$hits, cols = buyer, names_sep = c("_"), keep_empty = TRUE)
+df_fou = json$hits
+df_fou$søkestreng = "alle FOU-prosjekter"
+df_fou$antall_treff = json$numHitsTotal
+
+glimpse(df_fou)
+
+```
+
+# Alle utlysninger av utvalgte kunder
+
+Utvalgte kunder:
+
+- AID: Arbeids- og inkluderingsdepartementet
+- IMDi: Integrerings- og mangfoldsdirektoratet
+- Bufdir: Barne-, ungdoms- og familiedirektoratet
+- KDD: Kommunal- og distriktsdepartementet
+- KS: Kommunesektorens organisasjon
+- UiB: Universitetet i Bergen
+- HK-dir: Direktoratet for høyere utdanning og kompetanse
+- UDI: Utlendingsdirektoratet
+- Kulturråd: Norsk kulturråd
+- KUD: Kultur- og likestillingsdepartementet
+- JD: Justis- og beredskapsdepartementet
+- UDIR: Utdanningsdirektoratet
+- KD: Kulturdepartementet
+
+Ved hjelp av søkeforslagene til doffin.no fanger jeg opp ulike varianter og skrivemåter for disse kundene:
+
+```{r}
+kunder = c("Integrerings- og mangfoldsdirektoratet (IMDi)", "Integrerings- og mangfoldsdirektoratet", "Integrerings- og Mangfoldsdirektoratet", "Arbeids- og inkluderingsdepartementet", "Bufdir : Barne-, Ungdoms- og Familiedirektoratet", "Bufdir: Barne-, Ungdoms- og Familiedirektoratet", "Bufdir", "Barne-, ungdoms- og familiedirektoratet", "Barne-, ungdoms- og  familiedirektoratet", "Kommunal- og distriktsdepartementet", "KS  (Kommunesektorens organisasjon)", "KS  Kommunesektorens organisasjon", "UNIVERSITETET I BERGEN", "Universitetet i Bergen", "Universitetet I Bergen", "Direktoratet for høyere utdanning og kompetanse (HK-dir)", "DIREKTORATET FOR HØYERE UTDANNING OG KOMPETANSE", "Direktoratet for høyere utdanning og kompetanse", "Utlendingsdirektoratet - UDI", "Utlendingsdirektoratet", "Utlendingsdirektoratet (UDI)", "Norsk Kulturråd", "Kulturrådet", "Norsk kulturråd", "Kultur- og likestillingsdepartementet", "Justis- og beredskapsdepartementet", " JUSTIS- OG BEREDSKAPSDEPARTEMENTET", "Utdanningsdirektoratet", "Kulturdepartementet")
+```
+
+## Kan jeg spesifisere at jeg vil søke på buyer?
+
+En av styrkene med de tidligere tilnærmingene har vært at jeg har kunnet strenge sammen søk på utlysninger gjort av flere kunder. Det er ikke dokumentert et slik parameter i API-konsollet, men jeg ser at hovedsida har den muligheten. Det skjer da rett nok med en kanskje intrikat koda buyerID. F.eks. ser det ut til at IMDi sin er "3dc30fef9cfa44e8b2fb353f817cabc7".
+
+Kan jeg spesifisere dette også?
+
+```{r}
+resp = request(dev_url) |> 
+  req_method("GET") |> 
+  req_url_query(
+    numHitsPerPage = 10,
+    page = 1,
+    status = "EXPIRED",
+    buyer = "3dc30fef9cfa44e8b2fb353f817cabc7"
+  ) |> 
+  req_headers(
+    `Ocp-Apim-Subscription-Key` = dev_key,
+  ) |> 
+  req_perform()
+
+resp_status(resp)
+resp_content_type(resp)
+
+json = resp_body_json(resp, flatten = FALSE, simplifyVector = TRUE)
+test = tidyr::unnest(json$hits, cols = buyer, names_sep = c("_"), keep_empty = TRUE)
+
+```
+
+Dette gir ikke forventa resultat, verken for dev eller prod. Vi må dermed spesifisere kjøperne som en streng. Her ser tekstsøket ut til å fungere som et søk på hele strengen, slik at søk på flere kunder - som de 29 ulike navnene skrevet over - må skje iterativt. 
+
+Her støter jeg på rate limiting og 429-feil, så å legge inn en Sys.sleep for ikke å overbelaste tjenestene virker fornuftig.
+
+```{r}
+df_kunder = data.frame()
+
+for (i in 1:length(kunder)){
+  resp = request(prod_url) |> 
+    req_method("GET") |> 
+      req_url_query(
+      numHitsPerPage = 10,
+      page = 1,
+      searchString = kunder[i],
+      sortBy = "PUBLICATION_DATE_DESC",
+      #status = c("ACTIVE", "EXPIRED"),
+      #type = c("COMPETITION", "RESULT", "PLANNING"),
+      issueDateFrom = "2024-11-30",
+      issueDateTo = "2025-01-03",
+      .multi = "explode"
+    ) |> 
+    req_headers(
+      `Ocp-Apim-Subscription-Key` = prod_key,
+    ) |> 
+    req_perform()
+
+  resp_status(resp)
+  resp_content_type(resp)
+
+  json = resp_body_json(resp, flatten = FALSE, simplifyVector = TRUE)
+  test = json$hits
+  test$søkestreng = kunder[i]
+  test$antall_treff = json$numHitsTotal
+  
+  #test = tidyr::unnest(json$hits, cols = buyer, names_sep = c("_"), keep_empty = TRUE)
+  df_kunder = bind_rows(df_kunder, test)
+  Sys.sleep(10)
+}
+
+```
+
+
+# Alle CPV-utlysninger for spesifikke kunder
+
+```{r}
+df_kunder_cpv = data.frame()
+
+for (i in 1:length(kunder)){
+  resp = request(prod_url) |> 
+    req_method("GET") |> 
+      req_url_query(
+      numHitsPerPage = 10,
+      page = 1,
+      searchString = kunder[i],
+      sortBy = "PUBLICATION_DATE_DESC",
+      #status = c("ACTIVE", "EXPIRED"),
+      #type = c("COMPETITION", "RESULT", "PLANNING"),
+      cpvCode = "73000000",
+      issueDateFrom = "2024-11-30",
+      issueDateTo = "2025-01-03",
+      .multi = "explode"
+    ) |> 
+    req_headers(
+      `Ocp-Apim-Subscription-Key` = prod_key,
+    ) |> 
+    req_perform()
+
+  resp_status(resp)
+  resp_content_type(resp)
+
+  json = resp_body_json(resp, flatten = FALSE, simplifyVector = TRUE)
+  test = json$hits
+  test$søkestreng = kunder[i]
+  test$antall_treff = json$numHitsTotal
+  
+  df_kunder_cpv = bind_rows(df_kunder_cpv, test)
+  Sys.sleep(10)
+}
+
+
+
+```
+
+# Sammenstiller og eksporterer data
+
+Til slutt tar vi og sammenstiller dataene til et datasett. Her kan vi fjerne duplikater også. 
+
+Datasettet med kun FoU-prosjekter fra utvalgte kunder er (eller bør i hvert fall være) et underbruk av alle prosjekter fra disse kundene. Disse utelates derfor herifra.
+
+```{r}
+
+df = bind_rows(df_fou, df_kunder) |> 
+  filter(is.na(id) == FALSE) |>
+  tidyr::unnest(cols = buyer, names_sep = c("_"), keep_empty = TRUE) |> 
+  arrange(id)
+  
+df_kunder_cpv = filter(df_kunder_cpv, is.na(id) == FALSE) |> 
+  arrange(id)
+
+#vi har duplikater her, både fordi det er gjort flere spørringer som har returnert samme utlysning, og fordi vi har flere oppdragsgivere som samarbeider om en utlysning, men som etter unnesten over er separert ut til en egen rad.
+
+test = janitor::get_dupes(df, id)
+
+#eksport
+write_xlsx(list(alle = df, fou_kunder = df_kunder_cpv),
+           "data/kunngjorte_konkurranser_301124-030125.xlsx"
+           )
+```
+
