@@ -4,7 +4,7 @@ Noe enkel R-kode for å søke på [Doffin.no](https://doffin.no/) etter ulike op
 
 Benytter seg av [Doffins produksjons-API] (https://dof-notices-prod-api.developer.azure-api.net/apis). API-et inneholder to endepunkt - Notices og Public, der det første er for publisering av konkurranser, og det andre for å søke og laste ned konkurranser. Vi bruker sistnevnte. Se https://github.com/anskaffelser/eforms-sdk-nor for mer informasjon. 
 
-Koden gjennomgås i en kort [proof-of-concept](poc_api_nye_doffin.md), som viser hvordan innhold fra nye doffin.no hentes ut.
+Koden gjennomgås i en kort [proof-of-concept](poc_api_nye_doffin.Rmd), som viser hvordan innhold fra nye doffin.no hentes ut.
 
 I tillegg kan det være verdt å nevne at Doffin nå har fått sin egen [datavisualiserings-portal](https://www.doffin.no/data). De har også lagt ut komplette datasett over utlysninger for tidligere år.
 
